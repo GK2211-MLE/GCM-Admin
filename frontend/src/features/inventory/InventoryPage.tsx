@@ -270,7 +270,7 @@ export function InventoryPage() {
 
   const categories = useMemo(() => {
     if (!allProducts) return [];
-    return [...new Set(allProducts.map((p) => p.category))].sort();
+    return [...new Set(allProducts.map((p) => p.category).filter(Boolean))].sort();
   }, [allProducts]);
 
   const items = data?.items ?? [];

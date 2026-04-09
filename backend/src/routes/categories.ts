@@ -111,7 +111,12 @@ export async function categoryRoutes(app: FastifyInstance) {
 
     if (!category) return reply.code(404).send({ error: 'Category not found' });
 
-    // Clear category from all products that use this category's slug
+    // Clear category from all products that reference this category (by FK or slug)
+    await db
+      .update(products)
+      .set({ category: '', categoryId: null, updatedAt: new Date() })
+      .where(and(eq(products.categoryId, id), eq(products.tenantId, tenantId)));
+
     await db
       .update(products)
       .set({ category: '', updatedAt: new Date() })

@@ -3,8 +3,10 @@ import axios from 'axios';
 const TOKEN_KEY = 'f2c_admin_auth_token';
 const REFRESH_KEY = 'f2c_admin_refresh_token';
 
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
+
 export const apiClient = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -32,7 +34,7 @@ apiClient.interceptors.response.use(
         const refreshToken = localStorage.getItem(REFRESH_KEY);
         if (!refreshToken) throw new Error('No refresh token');
 
-        const { data } = await axios.post('/api/auth/refresh', { refreshToken });
+        const { data } = await axios.post(`${API_BASE}/auth/refresh`, { refreshToken });
         localStorage.setItem(TOKEN_KEY, data.accessToken);
         if (data.refreshToken) {
           localStorage.setItem(REFRESH_KEY, data.refreshToken);
@@ -65,7 +67,7 @@ apiClient.interceptors.response.use(
 );
 
 export const authApi = axios.create({
-  baseURL: '/api/auth',
+  baseURL: `${API_BASE}/auth`,
   headers: {
     'Content-Type': 'application/json',
   },

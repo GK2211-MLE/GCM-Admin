@@ -180,7 +180,7 @@ export function AnalyticsPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border-default)" />
                   <XAxis dataKey="date" stroke="var(--text-tertiary)" fontSize={11} />
                   <YAxis stroke="var(--text-tertiary)" fontSize={11} tickFormatter={(v) => `$${v}`} />
-                  <Tooltip {...tooltipStyle} formatter={(value: number) => [`$${value.toFixed(2)}`, 'Revenue']} />
+                  <Tooltip {...tooltipStyle} formatter={(value) => [`$${Number(value).toFixed(2)}`, 'Revenue']} />
                   <Area type="monotone" dataKey="revenue" stroke="#10b981" strokeWidth={2} fill="url(#colorRevenue)" />
                 </AreaChart>
               </ResponsiveContainer>
@@ -242,7 +242,7 @@ export function AnalyticsPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border-default)" />
                   <XAxis type="number" stroke="var(--text-tertiary)" fontSize={11} tickFormatter={(v) => `$${v}`} />
                   <YAxis type="category" dataKey="name" stroke="var(--text-tertiary)" fontSize={11} width={120} tick={{ fill: 'var(--text-secondary)' }} />
-                  <Tooltip {...tooltipStyle} formatter={(value: number) => [`$${value.toFixed(2)}`, 'Revenue']} />
+                  <Tooltip {...tooltipStyle} formatter={(value) => [`$${Number(value).toFixed(2)}`, 'Revenue']} />
                   <Bar dataKey="revenue" fill="#3b82f6" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -333,7 +333,7 @@ export function AnalyticsPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border-default)" />
                   <XAxis dataKey="month" stroke="var(--text-tertiary)" fontSize={11} />
                   <YAxis stroke="var(--text-tertiary)" fontSize={11} tickFormatter={(v) => `$${v}`} />
-                  <Tooltip {...tooltipStyle} formatter={(value: number) => [`$${value.toFixed(2)}`, 'Revenue']} />
+                  <Tooltip {...tooltipStyle} formatter={(value) => [`$${Number(value).toFixed(2)}`, 'Revenue']} />
                   <Bar dataKey="revenue" fill="#10b981" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>

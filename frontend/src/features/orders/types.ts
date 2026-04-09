@@ -31,6 +31,7 @@ export interface Order {
   deliveryAddress: string | null;
   subtotal: number;
   tax: number;
+  deliveryFee: number;
   total: number;
   notes: string | null;
   rating: number | null;
@@ -64,7 +65,7 @@ export interface OrderListItem {
   total: number;
   createdAt: string;
   customer: { name: string; phone: string } | null;
-  location: { name: string } | null;
+  location: { id: string; name: string } | null;
   items: OrderItem[];
   itemCount?: number;
   source?: OrderSource | null;

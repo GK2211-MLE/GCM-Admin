@@ -18,6 +18,7 @@ export interface InvoiceListItem {
 
 export interface InvoiceDetail extends InvoiceListItem {
   taxRate: number;
+  deliveryFee: number;
   items: {
     productName: string;
     quantity: number;

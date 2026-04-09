@@ -1,9 +1,13 @@
 import 'dotenv/config';
 import { config, printBanner } from './config.js';
 import { buildApp } from './app.js';
+import { runStartup } from './startup.js';
 
 async function main() {
   printBanner();
+
+  // Run migrations and seed (idempotent - safe on every startup)
+  await runStartup();
 
   const app = await buildApp();
 

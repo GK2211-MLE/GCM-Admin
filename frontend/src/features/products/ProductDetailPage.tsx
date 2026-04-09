@@ -1,0 +1,691 @@
+import { useState, useCallback, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  Save, X, ArrowLeft, Package, Trash2, ImageIcon, Upload,
+} from 'lucide-react';
+
+import { apiClient } from '@/lib/api-client';
+import { queryKeys } from '@/lib/query-keys';
+import { formatCurrency } from '@/lib/utils';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '@/components/ui/dialog';
+import { LoadingSpinner } from '@/components/feedback/LoadingSpinner';
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+interface HalalInfo {
+  certifyingBody: string;
+  certificateNumber: string;
+  validUntil: string;
+  slaughterMethod: string;
+  productionDate: string;
+  lotNumber: string;
+  distributor: string;
+  weightRange: string;
+  processorName: string;
+  processorClaims: string;
+  verifiedClaims: string;
+}
+
+interface Product {
+  id: string;
+  tenantId: string;
+  name: string;
+  description: string;
+  category: string;
+  unit: string;
+  pricePerUnit: number;
+  weightKg: number;
+  imageUrl: string;
+  active: boolean;
+  inStock: boolean;
+  isHalal?: boolean;
+  halalInfo?: Record<string, unknown>;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const EMPTY_HALAL_INFO: HalalInfo = {
+  certifyingBody: '',
+  certificateNumber: '',
+  validUntil: '',
+  slaughterMethod: '',
+  productionDate: '',
+  lotNumber: '',
+  distributor: '',
+  weightRange: '',
+  processorName: '',
+  processorClaims: '',
+  verifiedClaims: '',
+};
+
+interface FormState {
+  name: string;
+  description: string;
+  category: string;
+  priceDollars: string;
+  unit: string;
+  imageUrl: string;
+  active: boolean;
+  inStock: boolean;
+  sortOrder: string;
+  isHalal: boolean;
+  halalInfo: HalalInfo;
+}
+
+const EMPTY_FORM: FormState = {
+  name: '',
+  description: '',
+  category: '',
+  priceDollars: '',
+  unit: 'lb',
+  imageUrl: '',
+  active: true,
+  inStock: true,
+  sortOrder: '0',
+  isHalal: false,
+  halalInfo: { ...EMPTY_HALAL_INFO },
+};
+
+// ── Component ────────────────────────────────────────────────────────────────
+
+export function ProductDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const isNew = id === 'new';
+
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [isDirty, setIsDirty] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+
+  // ── Queries ──────────────────────────────────────────────────────────────
+
+  const { data: product, isLoading } = useQuery({
+    queryKey: queryKeys.products.detail(id ?? ''),
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ product: Product }>(`/products/${id}`);
+      return data.product;
+    },
+    enabled: !isNew && !!id,
+  });
+
+  // Fetch categories from DB
+  const { data: dbCategories = [] } = useQuery({
+    queryKey: queryKeys.catalog.categories(),
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ categories: { slug: string; name: string; active: boolean }[] }>('/categories');
+      return data.categories;
+    },
+  });
+
+  // Sync product data into form
+  useEffect(() => {
+    if (product && !isNew) {
+      const hi = product.halalInfo as Record<string, unknown> | undefined;
+      setForm({
+        name: product.name,
+        description: product.description ?? '',
+        category: product.category ?? '',
+        priceDollars: (product.pricePerUnit / 100).toFixed(2),
+        unit: product.unit ?? 'lb',
+        imageUrl: product.imageUrl ?? '',
+        active: product.active ?? true,
+        inStock: product.inStock ?? true,
+        sortOrder: String(product.sortOrder ?? 0),
+        isHalal: product.isHalal ?? false,
+        halalInfo: {
+          certifyingBody: (hi?.certifyingBody as string) ?? '',
+          certificateNumber: (hi?.certificateNumber as string) ?? '',
+          validUntil: (hi?.validUntil as string) ?? '',
+          slaughterMethod: (hi?.slaughterMethod as string) ?? '',
+          productionDate: (hi?.productionDate as string) ?? '',
+          lotNumber: (hi?.lotNumber as string) ?? '',
+          distributor: (hi?.distributor as string) ?? '',
+          weightRange: (hi?.weightRange as string) ?? '',
+          processorName: (hi?.processorName as string) ?? '',
+          processorClaims: Array.isArray(hi?.processorClaims)
+            ? (hi.processorClaims as string[]).join(', ')
+            : (hi?.processorClaims as string) ?? '',
+          verifiedClaims: Array.isArray(hi?.verifiedClaims)
+            ? (hi.verifiedClaims as string[]).join(', ')
+            : (hi?.verifiedClaims as string) ?? '',
+        },
+      });
+      setIsDirty(false);
+    }
+  }, [product, isNew]);
+
+  // ── Mutations ────────────────────────────────────────────────────────────
+
+  const createProduct = useMutation({
+    mutationFn: async (payload: Record<string, unknown>) => {
+      const { data } = await apiClient.post('/products', payload);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+      navigate('/products');
+    },
+  });
+
+  const updateProduct = useMutation({
+    mutationFn: async (payload: Record<string, unknown>) => {
+      const { data } = await apiClient.put(`/products/${id}`, payload);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.products.detail(id!) });
+      setIsDirty(false);
+    },
+  });
+
+  const deleteProduct = useMutation({
+    mutationFn: async () => {
+      await apiClient.delete(`/products/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+      navigate('/products');
+    },
+  });
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+
+  const updateField = useCallback(<K extends keyof FormState>(key: K, value: FormState[K]) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
+    setIsDirty(true);
+  }, []);
+
+  const updateHalalField = useCallback(<K extends keyof HalalInfo>(key: K, value: HalalInfo[K]) => {
+    setForm((prev) => ({ ...prev, halalInfo: { ...prev.halalInfo, [key]: value } }));
+    setIsDirty(true);
+  }, []);
+
+  const buildPayload = useCallback(() => {
+    const dollars = parseFloat(form.priceDollars);
+    return {
+      name: form.name.trim(),
+      description: form.description.trim(),
+      category: form.category,
+      pricePerUnit: Math.round((isNaN(dollars) ? 0 : dollars) * 100),
+      unit: form.unit,
+      imageUrl: form.imageUrl.trim(),
+      active: form.active,
+      inStock: form.inStock,
+      sortOrder: parseInt(form.sortOrder, 10) || 0,
+      isHalal: form.isHalal,
+      halalInfo: form.isHalal
+        ? {
+            ...form.halalInfo,
+            processorClaims: form.halalInfo.processorClaims
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean),
+            verifiedClaims: form.halalInfo.verifiedClaims
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean),
+          }
+        : {},
+    };
+  }, [form]);
+
+  const onSave = useCallback(() => {
+    const payload = buildPayload();
+    if (isNew) {
+      createProduct.mutate(payload);
+    } else {
+      updateProduct.mutate(payload);
+    }
+  }, [buildPayload, isNew, createProduct, updateProduct]);
+
+  const onDelete = useCallback(() => {
+    deleteProduct.mutate();
+  }, [deleteProduct]);
+
+  const isSaving = updateProduct.isPending || createProduct.isPending;
+  const isFormValid = form.name.trim().length > 0 && form.category.length > 0 && form.priceDollars.length > 0;
+
+  const displayPrice = form.priceDollars && !isNaN(parseFloat(form.priceDollars))
+    ? formatCurrency(parseFloat(form.priceDollars))
+    : '$0.00';
+
+  // Only show DB categories in dropdown
+  const allCategories = dbCategories.map((c) => c.slug);
+  const categoryLabelMap = Object.fromEntries(dbCategories.map((c) => [c.slug, c.name]));
+
+  function capitalize(s: string) {
+    return s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ');
+  }
+
+  // ── Loading / Not Found ──────────────────────────────────────────────────
+
+  if (isLoading && !isNew) {
+    return <LoadingSpinner className="h-64" />;
+  }
+
+  if (!product && !isNew) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px]">
+        <Package className="h-16 w-16 text-[var(--text-tertiary)] mb-4" />
+        <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-1">Product not found</h3>
+        <p className="text-sm text-[var(--text-secondary)] mb-6">
+          This product may have been deleted or does not exist.
+        </p>
+        <Button variant="outline" onClick={() => navigate('/products')}>
+          <ArrowLeft className="mr-2 h-4 w-4" /> Back to Products
+        </Button>
+      </div>
+    );
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title={isNew ? 'New Product' : (product?.name ?? '')}
+        description={isNew ? 'Create a new product in your catalog.' : `Category: ${product?.category ?? ''}`}
+        actions={
+          <div className="flex items-center gap-2">
+            {!isNew && (
+              <Button
+                variant="outline"
+                className="text-danger hover:text-danger"
+                onClick={() => setShowDeleteDialog(true)}
+              >
+                <Trash2 className="mr-2 h-4 w-4" /> Delete
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => navigate('/products')}>
+              <X className="mr-2 h-4 w-4" /> Cancel
+            </Button>
+            <Button
+              onClick={onSave}
+              disabled={isNew ? !isFormValid || isSaving : (!isDirty || !isFormValid || isSaving)}
+            >
+              <Save className="mr-2 h-4 w-4" />
+              {isSaving ? 'Saving...' : isNew ? 'Create Product' : 'Save Changes'}
+            </Button>
+          </div>
+        }
+      />
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* Left: Product Image Display */}
+        <div>
+          <div className="relative aspect-[4/3] overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--surface-tertiary)] flex items-center justify-center">
+            {form.imageUrl ? (
+              <img
+                src={form.imageUrl}
+                alt={form.name || 'Product'}
+                className="h-full w-full object-cover"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+              />
+            ) : (
+              <div className="flex flex-col items-center gap-2 text-[var(--text-tertiary)]">
+                <ImageIcon className="h-16 w-16" />
+                <span className="text-sm">No image</span>
+              </div>
+            )}
+            <div className="absolute left-3 top-3">
+              <Badge variant={form.active ? 'success' : 'danger'}>
+                {form.active ? 'Active' : 'Inactive'}
+              </Badge>
+            </div>
+            {!form.inStock && (
+              <div className="absolute right-3 top-3">
+                <Badge variant="warning">Out of Stock</Badge>
+              </div>
+            )}
+          </div>
+          <div className="mt-4 text-center">
+            <p className="text-2xl font-bold text-[var(--text-primary)]">{displayPrice}</p>
+            <p className="text-sm text-[var(--text-secondary)]">{form.unit}</p>
+          </div>
+        </div>
+
+        {/* Right: Edit Form */}
+        <div className="lg:col-span-2">
+          <Card>
+            <CardContent className="p-6">
+              <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                {/* Product Name - full width */}
+                <div className="space-y-1.5 md:col-span-2">
+                  <label className="text-sm font-medium text-[var(--text-primary)]">Product Name *</label>
+                  <Input
+                    placeholder="e.g. Chicken Breast Boneless"
+                    value={form.name}
+                    onChange={(e) => updateField('name', e.target.value)}
+                  />
+                </div>
+
+                {/* Description - full width */}
+                <div className="space-y-1.5 md:col-span-2">
+                  <label className="text-sm font-medium text-[var(--text-primary)]">Description</label>
+                  <textarea
+                    rows={3}
+                    className="flex w-full rounded-lg border border-[var(--border-default)] bg-[var(--surface-tertiary)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 resize-none"
+                    placeholder="Describe the product..."
+                    value={form.description}
+                    onChange={(e) => updateField('description', e.target.value)}
+                  />
+                </div>
+
+                {/* Image URL - full width */}
+                <div className="space-y-1.5 md:col-span-2">
+                  <label className="text-sm font-medium text-[var(--text-primary)]">Image URL</label>
+                  <div className="relative">
+                    <Upload className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-tertiary)]" />
+                    <Input
+                      className="pl-9"
+                      placeholder="https://example.com/product-image.jpg"
+                      value={form.imageUrl}
+                      onChange={(e) => updateField('imageUrl', e.target.value)}
+                    />
+                  </div>
+                  <p className="text-xs text-[var(--text-tertiary)]">
+                    Paste a direct link to the product image
+                  </p>
+                </div>
+
+                {/* Category */}
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-[var(--text-primary)]">Category *</label>
+                  <Select
+                    value={form.category}
+                    onValueChange={(v) => updateField('category', v)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {allCategories.map((cat) => (
+                        <SelectItem key={cat} value={cat}>
+                          {categoryLabelMap[cat] || capitalize(cat)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Price */}
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-[var(--text-primary)]">Price (USD) *</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[var(--text-tertiary)]">$</span>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      className="pl-7"
+                      placeholder="3.99"
+                      value={form.priceDollars}
+                      onChange={(e) => updateField('priceDollars', e.target.value)}
+                    />
+                  </div>
+                  {form.priceDollars && !isNaN(parseFloat(form.priceDollars)) && (
+                    <p className="text-xs text-[var(--text-tertiary)]">
+                      = {Math.round(parseFloat(form.priceDollars) * 100)} cents
+                    </p>
+                  )}
+                </div>
+
+                {/* Unit */}
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-[var(--text-primary)]">Unit</label>
+                  <Select
+                    value={form.unit}
+                    onValueChange={(v) => updateField('unit', v)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select unit" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="lb">Pound (lb)</SelectItem>
+                      <SelectItem value="kg">Kilogram (kg)</SelectItem>
+                      <SelectItem value="each">Each</SelectItem>
+                      <SelectItem value="piece">Piece</SelectItem>
+                      <SelectItem value="pack">Pack</SelectItem>
+                      <SelectItem value="dozen">Dozen</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Sort Order */}
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-[var(--text-primary)]">Sort Order</label>
+                  <Input
+                    type="number"
+                    min="0"
+                    placeholder="0"
+                    value={form.sortOrder}
+                    onChange={(e) => updateField('sortOrder', e.target.value)}
+                  />
+                </div>
+
+                {/* Status */}
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-[var(--text-primary)]">Status</label>
+                  <Select
+                    value={form.active ? 'active' : 'inactive'}
+                    onValueChange={(v) => updateField('active', v === 'active')}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Active</SelectItem>
+                      <SelectItem value="inactive">Inactive</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* In Stock toggle - full width */}
+                <div className="flex items-center justify-between rounded-lg border border-[var(--border-default)] p-3 md:col-span-2">
+                  <div>
+                    <p className="text-sm font-medium text-[var(--text-primary)]">In Stock</p>
+                    <p className="text-xs text-[var(--text-tertiary)]">Product available for ordering</p>
+                  </div>
+                  <Switch
+                    checked={form.inStock}
+                    onCheckedChange={(checked) => updateField('inStock', checked)}
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* ── Halal Certification Section ──────────────────────────────────── */}
+      <Card
+        className={`transition-colors ${
+          form.isHalal
+            ? 'border-green-500/40 bg-green-50/60 dark:bg-green-950/20'
+            : ''
+        }`}
+      >
+        <CardContent className="p-6 space-y-5">
+          {/* Halal Toggle */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-xl">&#9770;&#65039;</span>
+              <div>
+                <p className="text-sm font-semibold text-[var(--text-primary)]">
+                  Halal Certification
+                </p>
+                <p className="text-xs text-[var(--text-tertiary)]">
+                  Enable to add halal certification details for this product
+                </p>
+              </div>
+            </div>
+            <Switch
+              checked={form.isHalal}
+              onCheckedChange={(checked) => updateField('isHalal', checked)}
+            />
+          </div>
+
+          {form.isHalal && (
+            <div className="space-y-6 pt-2">
+              {/* Production Details */}
+              <div>
+                <h4 className="text-sm font-semibold text-green-700 dark:text-green-400 mb-3">
+                  Production Details
+                </h4>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium text-[var(--text-primary)]">Production Date</label>
+                    <Input
+                      placeholder="e.g. 2025-03-15"
+                      value={form.halalInfo.productionDate}
+                      onChange={(e) => updateHalalField('productionDate', e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium text-[var(--text-primary)]">Lot Number</label>
+                    <Input
+                      placeholder="e.g. LOT-2025-0342"
+                      value={form.halalInfo.lotNumber}
+                      onChange={(e) => updateHalalField('lotNumber', e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium text-[var(--text-primary)]">Distributor</label>
+                    <Input
+                      placeholder="e.g. Farm2Cook Distribution"
+                      value={form.halalInfo.distributor}
+                      onChange={(e) => updateHalalField('distributor', e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium text-[var(--text-primary)]">Weight Range</label>
+                    <Input
+                      placeholder="e.g. 3.5 - 4.5 lbs"
+                      value={form.halalInfo.weightRange}
+                      onChange={(e) => updateHalalField('weightRange', e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Processor Information */}
+              <div>
+                <h4 className="text-sm font-semibold text-green-700 dark:text-green-400 mb-3">
+                  Processor Information
+                </h4>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="space-y-1.5 md:col-span-2">
+                    <label className="text-sm font-medium text-[var(--text-primary)]">Processor Name</label>
+                    <Input
+                      placeholder="e.g. Sanderson Farms"
+                      value={form.halalInfo.processorName}
+                      onChange={(e) => updateHalalField('processorName', e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium text-[var(--text-primary)]">Processor Claims</label>
+                    <Input
+                      placeholder="e.g. No Antibiotics Ever, Humanely Raised"
+                      value={form.halalInfo.processorClaims}
+                      onChange={(e) => updateHalalField('processorClaims', e.target.value)}
+                    />
+                    <p className="text-xs text-[var(--text-tertiary)]">Comma-separated list</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium text-[var(--text-primary)]">Verified Claims</label>
+                    <Input
+                      placeholder="e.g. USDA Inspected, No Added Hormones"
+                      value={form.halalInfo.verifiedClaims}
+                      onChange={(e) => updateHalalField('verifiedClaims', e.target.value)}
+                    />
+                    <p className="text-xs text-[var(--text-tertiary)]">Comma-separated list</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Halal Certification Details */}
+              <div>
+                <h4 className="text-sm font-semibold text-green-700 dark:text-green-400 mb-3">
+                  Halal Certification Details
+                </h4>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium text-[var(--text-primary)]">Certifying Body</label>
+                    <Input
+                      placeholder="e.g. Islamic Society of North America (ISNA)"
+                      value={form.halalInfo.certifyingBody}
+                      onChange={(e) => updateHalalField('certifyingBody', e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium text-[var(--text-primary)]">Certificate Number</label>
+                    <Input
+                      placeholder="e.g. ISNA-2025-00142"
+                      value={form.halalInfo.certificateNumber}
+                      onChange={(e) => updateHalalField('certificateNumber', e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium text-[var(--text-primary)]">Valid Until</label>
+                    <Input
+                      placeholder="e.g. 2026-03-15"
+                      value={form.halalInfo.validUntil}
+                      onChange={(e) => updateHalalField('validUntil', e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1.5 md:col-span-2">
+                    <label className="text-sm font-medium text-[var(--text-primary)]">Slaughter Method Details</label>
+                    <textarea
+                      rows={3}
+                      className="flex w-full rounded-lg border border-[var(--border-default)] bg-[var(--surface-tertiary)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20 resize-none"
+                      placeholder="Describe the halal slaughter method and any relevant details..."
+                      value={form.halalInfo.slaughterMethod}
+                      onChange={(e) => updateHalalField('slaughterMethod', e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Delete confirmation dialog */}
+      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Product</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete <strong>{product?.name}</strong>? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDeleteDialog(false)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={onDelete}
+              disabled={deleteProduct.isPending}
+            >
+              {deleteProduct.isPending ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

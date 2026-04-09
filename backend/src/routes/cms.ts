@@ -1,0 +1,40 @@
+import type { FastifyInstance } from 'fastify';
+import { eq, and } from 'drizzle-orm';
+import { db } from '../db/client.js';
+import { cmsPages } from '../db/schema.js';
+import { authGuard } from '../middleware/auth.js';
+import { getTenantId } from '../middleware/tenant.js';
+
+export async function cmsRoutes(app: FastifyInstance) {
+  // List all pages
+  app.get('/', { preHandler: [authGuard] }, async (request) => {
+    const tenantId = getTenantId(request);
+    const pages = await db.select().from(cmsPages).where(eq(cmsPages.tenantId, tenantId));
+    return { pages };
+  });
+
+  // Update page
+  app.put('/:id', { preHandler: [authGuard] }, async (request, reply) => {
+    const tenantId = getTenantId(request);
+    const { id } = request.params as { id: string };
+    const { title, content, isPublished } = request.body as { title?: string; content?: string; isPublished?: boolean };
+
+    const [page] = await db.update(cmsPages).set({
+      ...(title !== undefined ? { title } : {}),
+      ...(content !== undefined ? { content } : {}),
+      ...(isPublished !== undefined ? { isPublished } : {}),
+      updatedAt: new Date(),
+    }).where(and(eq(cmsPages.id, id), eq(cmsPages.tenantId, tenantId))).returning();
+
+    if (!page) return reply.status(404).send({ error: 'Page not found' });
+    return { page };
+  });
+
+  // Create page
+  app.post('/', { preHandler: [authGuard] }, async (request) => {
+    const tenantId = getTenantId(request);
+    const { slug, title, content } = request.body as { slug: string; title: string; content: string };
+    const [page] = await db.insert(cmsPages).values({ tenantId, slug, title, content }).returning();
+    return { page };
+  });
+}

@@ -1,0 +1,322 @@
+import { useState, useCallback } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { type ColumnDef } from '@tanstack/react-table';
+import { apiClient } from '@/lib/api-client';
+import { queryKeys } from '@/lib/query-keys';
+import { formatDate } from '@/lib/utils';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { DataTable } from '@/components/data-table/DataTable';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '@/components/ui/dialog';
+import { Plus, Pencil, Trash2, Tag } from 'lucide-react';
+
+interface Promotion {
+  id: string;
+  code: string;
+  description: string;
+  discountType: string;
+  discountValue: number;
+  minOrder: number;
+  maxUses: number;
+  usedCount: number;
+  active: boolean;
+  startsAt: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
+const EMPTY_FORM = {
+  code: '',
+  description: '',
+  discountType: 'percent',
+  discountValue: '',
+  minOrder: '0',
+  maxUses: '0',
+  active: true,
+  startsAt: '',
+  expiresAt: '',
+};
+
+export function PromotionListPage() {
+  const queryClient = useQueryClient();
+  const [formOpen, setFormOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<Promotion | null>(null);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [deleteTarget, setDeleteTarget] = useState<Promotion | null>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: queryKeys.promotions.list(),
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ promotions: Promotion[] }>('/promotions');
+      return data.promotions;
+    },
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: async (payload: Record<string, unknown>) => {
+      if (editTarget) {
+        return apiClient.put(`/promotions/${editTarget.id}`, payload);
+      }
+      return apiClient.post('/promotions', payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.promotions.list() });
+      setFormOpen(false);
+      setEditTarget(null);
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => apiClient.delete(`/promotions/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.promotions.list() });
+      setDeleteTarget(null);
+    },
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: async ({ id, active }: { id: string; active: boolean }) =>
+      apiClient.put(`/promotions/${id}`, { active }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.promotions.list() });
+    },
+  });
+
+  const handleAdd = useCallback(() => {
+    setEditTarget(null);
+    setForm(EMPTY_FORM);
+    setFormOpen(true);
+  }, []);
+
+  const handleEdit = useCallback((promo: Promotion) => {
+    setEditTarget(promo);
+    setForm({
+      code: promo.code,
+      description: promo.description,
+      discountType: promo.discountType,
+      discountValue: String(promo.discountType === 'fixed' ? promo.discountValue / 100 : promo.discountValue),
+      minOrder: String(promo.minOrder / 100),
+      maxUses: String(promo.maxUses),
+      active: promo.active,
+      startsAt: promo.startsAt?.split('T')[0] ?? '',
+      expiresAt: promo.expiresAt?.split('T')[0] ?? '',
+    });
+    setFormOpen(true);
+  }, []);
+
+  const handleSubmit = useCallback(() => {
+    const discountValue = form.discountType === 'fixed'
+      ? Math.round(parseFloat(form.discountValue) * 100)
+      : parseFloat(form.discountValue);
+    saveMutation.mutate({
+      code: form.code.toUpperCase(),
+      description: form.description,
+      discountType: form.discountType,
+      discountValue,
+      minOrder: Math.round(parseFloat(form.minOrder || '0') * 100),
+      maxUses: parseInt(form.maxUses || '0'),
+      active: form.active,
+      startsAt: form.startsAt || new Date().toISOString(),
+      expiresAt: form.expiresAt || '2030-12-31',
+    });
+  }, [form, saveMutation]);
+
+  const columns: ColumnDef<Promotion, unknown>[] = [
+    {
+      accessorKey: 'code',
+      header: 'Code',
+      cell: ({ getValue }) => (
+        <span className="font-mono font-bold text-primary-500">{getValue<string>()}</span>
+      ),
+    },
+    {
+      accessorKey: 'description',
+      header: 'Description',
+      cell: ({ getValue }) => (
+        <span className="text-sm text-[var(--text-secondary)]">{getValue<string>() || '—'}</span>
+      ),
+    },
+    {
+      id: 'discount',
+      header: 'Discount',
+      cell: ({ row }) => {
+        const p = row.original;
+        return (
+          <Badge variant="info">
+            {p.discountType === 'percent' ? `${p.discountValue}% off` : `$${(p.discountValue / 100).toFixed(2)} off`}
+          </Badge>
+        );
+      },
+    },
+    {
+      id: 'minOrder',
+      header: 'Min Order',
+      cell: ({ row }) => row.original.minOrder > 0 ? `$${(row.original.minOrder / 100).toFixed(2)}` : 'None',
+    },
+    {
+      id: 'usage',
+      header: 'Usage',
+      cell: ({ row }) => (
+        <span className="tabular-nums">
+          {row.original.usedCount} / {row.original.maxUses === 0 ? '∞' : row.original.maxUses}
+        </span>
+      ),
+    },
+    {
+      id: 'dates',
+      header: 'Valid Period',
+      cell: ({ row }) => (
+        <span className="text-xs text-[var(--text-tertiary)]">
+          {formatDate(row.original.startsAt)} — {formatDate(row.original.expiresAt)}
+        </span>
+      ),
+    },
+    {
+      id: 'active',
+      header: 'Active',
+      cell: ({ row }) => (
+        <Switch
+          checked={row.original.active}
+          onCheckedChange={(checked) => toggleMutation.mutate({ id: row.original.id, active: checked })}
+        />
+      ),
+    },
+    {
+      id: 'actions',
+      header: '',
+      size: 100,
+      cell: ({ row }) => (
+        <div className="flex gap-1">
+          <Button variant="ghost" size="sm" className="h-8 w-8 p-0" type="button"
+            onClick={() => handleEdit(row.original)}>
+            <Pencil className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-danger" type="button"
+            onClick={() => setDeleteTarget(row.original)}>
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <div>
+      <PageHeader
+        title="Promotions"
+        description="Manage discount codes and promotions"
+        actions={
+          <Button onClick={handleAdd}>
+            <Plus className="mr-2 h-4 w-4" /> Add Promotion
+          </Button>
+        }
+      />
+      <DataTable columns={columns} data={data ?? []} isLoading={isLoading} emptyMessage="No promotions found" />
+
+      {/* Add/Edit Dialog */}
+      <Dialog open={formOpen} onOpenChange={setFormOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editTarget ? 'Edit Promotion' : 'Add Promotion'}</DialogTitle>
+            <DialogDescription>
+              {editTarget ? 'Update the promotion details.' : 'Create a new promo code for your customers.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 mt-4">
+            <div>
+              <label className="mb-1.5 block text-sm font-medium">Code *</label>
+              <Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })}
+                placeholder="e.g. WELCOME10" style={{ textTransform: 'uppercase', letterSpacing: '2px', fontWeight: 600 }} />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium">Description</label>
+              <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="e.g. 10% off your first order" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">Discount Type</label>
+                <Select value={form.discountType} onValueChange={(v) => setForm({ ...form, discountType: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="percent">Percentage (%)</SelectItem>
+                    <SelectItem value="fixed">Fixed Amount ($)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">
+                  Discount Value {form.discountType === 'percent' ? '(%)' : '($)'}
+                </label>
+                <Input type="number" step={form.discountType === 'percent' ? '1' : '0.01'}
+                  value={form.discountValue} onChange={(e) => setForm({ ...form, discountValue: e.target.value })}
+                  placeholder={form.discountType === 'percent' ? '10' : '5.00'} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">Min Order ($)</label>
+                <Input type="number" step="0.01" value={form.minOrder}
+                  onChange={(e) => setForm({ ...form, minOrder: e.target.value })} placeholder="0" />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">Max Uses (0 = unlimited)</label>
+                <Input type="number" value={form.maxUses}
+                  onChange={(e) => setForm({ ...form, maxUses: e.target.value })} placeholder="0" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">Start Date</label>
+                <Input type="date" value={form.startsAt}
+                  onChange={(e) => setForm({ ...form, startsAt: e.target.value })} />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">Expiry Date</label>
+                <Input type="date" value={form.expiresAt}
+                  onChange={(e) => setForm({ ...form, expiresAt: e.target.value })} />
+              </div>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <span className="text-sm font-medium">Active</span>
+              <Switch checked={form.active} onCheckedChange={(checked) => setForm({ ...form, active: checked })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFormOpen(false)}>Cancel</Button>
+            <Button onClick={handleSubmit} disabled={saveMutation.isPending || !form.code.trim()}>
+              {saveMutation.isPending ? 'Saving...' : editTarget ? 'Update' : 'Create'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete Promotion</DialogTitle>
+            <DialogDescription>
+              Delete promo code <strong>{deleteTarget?.code}</strong>? This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+              disabled={deleteMutation.isPending}>
+              {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

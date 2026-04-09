@@ -41,7 +41,12 @@ export async function buildApp() {
 
   // Plugins
   await app.register(cors, {
-    origin: [config.ADMIN_ORIGIN, 'http://localhost:5173', 'http://localhost:3000'],
+    origin: [
+      config.ADMIN_ORIGIN,
+      'https://farm2cook-admin-frontend.onrender.com',
+      'http://localhost:5173',  // local dev
+      'http://localhost:3000',  // local dev
+    ],
     credentials: true,
   });
   await app.register(formbody);

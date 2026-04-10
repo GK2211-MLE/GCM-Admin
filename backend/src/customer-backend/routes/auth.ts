@@ -311,4 +311,165 @@ export async function customerAuthRoutes(app: FastifyInstance) {
 
     return { message: 'Password has been reset successfully' };
   });
+
+  // ── Google OAuth: start ─────────────────────────────────────
+  // Redirects the user to Google's consent screen.
+  // Frontend may pass ?redirect=/some/path to return there after login.
+  app.get('/google', async (request, reply) => {
+    if (!config.GOOGLE_CLIENT_ID || !config.GOOGLE_CLIENT_SECRET) {
+      return reply.code(503).send({ error: 'Google sign-in is not configured on this server.' });
+    }
+
+    const { redirect } = request.query as { redirect?: string };
+
+    // Sign a short-lived state token so the callback can verify it came from us
+    // and recover the post-login redirect target without server-side session storage.
+    const state = jwt.sign(
+      { redirect: redirect || '/account', nonce: crypto.randomBytes(8).toString('hex') },
+      config.JWT_SECRET,
+      { expiresIn: '10m' },
+    );
+
+    const callbackUrl = `${config.BASE_URL}/api/customer/auth/google/callback`;
+    const params = new URLSearchParams({
+      client_id: config.GOOGLE_CLIENT_ID,
+      redirect_uri: callbackUrl,
+      response_type: 'code',
+      scope: 'openid email profile',
+      access_type: 'online',
+      prompt: 'select_account',
+      state,
+    });
+
+    return reply.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+  });
+
+  // ── Google OAuth: callback ──────────────────────────────────
+  // Google redirects the user back here with ?code=&state=
+  app.get('/google/callback', async (request, reply) => {
+    if (!config.GOOGLE_CLIENT_ID || !config.GOOGLE_CLIENT_SECRET) {
+      return reply.code(503).send({ error: 'Google sign-in is not configured on this server.' });
+    }
+
+    const { code, state, error: oauthError } = request.query as {
+      code?: string;
+      state?: string;
+      error?: string;
+    };
+
+    const failRedirect = (msg: string) =>
+      reply.redirect(`${config.CUSTOMER_FRONTEND_URL}/login?error=${encodeURIComponent(msg)}`);
+
+    if (oauthError) return failRedirect(oauthError);
+    if (!code || !state) return failRedirect('Missing code or state');
+
+    // Verify state token (proves this callback belongs to a flow we started)
+    let redirectPath = '/account';
+    try {
+      const decoded = jwt.verify(state, config.JWT_SECRET) as { redirect?: string };
+      if (decoded.redirect) redirectPath = decoded.redirect;
+    } catch {
+      return failRedirect('Invalid state');
+    }
+
+    // Exchange the auth code for tokens
+    const callbackUrl = `${config.BASE_URL}/api/customer/auth/google/callback`;
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: config.GOOGLE_CLIENT_ID,
+        client_secret: config.GOOGLE_CLIENT_SECRET,
+        redirect_uri: callbackUrl,
+        grant_type: 'authorization_code',
+      }).toString(),
+    });
+
+    if (!tokenRes.ok) {
+      return failRedirect('Failed to exchange code with Google');
+    }
+    const tokenData = (await tokenRes.json()) as { access_token?: string };
+    if (!tokenData.access_token) return failRedirect('No access token from Google');
+
+    // Fetch the user's profile from Google
+    const profileRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    if (!profileRes.ok) return failRedirect('Failed to fetch Google profile');
+
+    const profile = (await profileRes.json()) as {
+      sub?: string;
+      email?: string;
+      email_verified?: boolean;
+      name?: string;
+      given_name?: string;
+      picture?: string;
+    };
+
+    if (!profile.email) return failRedirect('Google did not return an email');
+    if (profile.email_verified === false) return failRedirect('Google email is not verified');
+
+    const email = profile.email.toLowerCase().trim();
+    const displayName = profile.name || profile.given_name || email.split('@')[0];
+
+    // Find or create the user
+    let [user] = await db
+      .select()
+      .from(appUsers)
+      .where(eq(appUsers.email, email))
+      .limit(1);
+
+    if (!user) {
+      // New Google-only user. Create with an unusable random password hash so
+      // password login is impossible until they explicitly set one via reset.
+      const tenantId = await getDefaultTenantId();
+      const placeholderHash = await bcrypt.hash(
+        `google-oauth-${crypto.randomBytes(32).toString('hex')}`,
+        12,
+      );
+
+      [user] = await db
+        .insert(appUsers)
+        .values({
+          tenantId,
+          email,
+          passwordHash: placeholderHash,
+          name: displayName,
+          phone: '',
+          displayName,
+          role: 'customer',
+        })
+        .returning();
+    }
+
+    // Issue our own JWTs (same shape as /login and /signup return)
+    const payload = {
+      id: user.id,
+      tenantId: user.tenantId,
+      email: user.email,
+      role: 'customer' as const,
+    };
+    const accessToken = jwt.sign(payload, config.JWT_SECRET, { expiresIn: '8h' });
+    const refreshToken = jwt.sign(payload, config.JWT_REFRESH_SECRET, { expiresIn: '7d' });
+
+    await db
+      .update(appUsers)
+      .set({ refreshToken, updatedAt: new Date() })
+      .where(eq(appUsers.id, user.id));
+
+    // Redirect back to the customer site with the token + user encoded in the URL.
+    // Frontend /login page reads these query params and calls setAuth().
+    const userPayload = encodeURIComponent(
+      JSON.stringify({
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        phone: user.phone,
+        tenantId: user.tenantId,
+      }),
+    );
+    const target = `${config.CUSTOMER_FRONTEND_URL}/login?token=${accessToken}&user=${userPayload}&redirect=${encodeURIComponent(redirectPath)}`;
+    return reply.redirect(target);
+  });
 }

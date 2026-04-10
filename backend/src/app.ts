@@ -28,6 +28,10 @@ import { cmsRoutes } from './routes/cms.js';
 import { recipeRoutes } from './routes/recipes.js';
 import { analyticsRoutes } from './routes/analytics.js';
 import { notificationRoutes } from './routes/notifications.js';
+import { contactMessageRoutes } from './routes/contact-messages.js';
+import { newsletterRoutes } from './routes/newsletter-subs.js';
+import { adminReviewRoutes } from './routes/reviews-admin.js';
+import { adminWishlistRoutes } from './routes/wishlists-admin.js';
 
 /* ════════════════════════════════════════════════════════════════
    CUSTOMER WEBSITE ROUTES (from customer-backend/)
@@ -95,6 +99,10 @@ export async function buildApp() {
   await app.register(recipeRoutes, { prefix: '/api/recipes' });
   await app.register(analyticsRoutes, { prefix: '/api/analytics' });
   await app.register(notificationRoutes, { prefix: '/api/notifications' });
+  await app.register(contactMessageRoutes, { prefix: '/api/contact-messages' });
+  await app.register(newsletterRoutes, { prefix: '/api/newsletter-subs' });
+  await app.register(adminReviewRoutes, { prefix: '/api/admin/reviews' });
+  await app.register(adminWishlistRoutes, { prefix: '/api/admin/wishlists' });
 
   /* ════════════════════════════════════════════════════════════════
      CUSTOMER WEBSITE ROUTES (from customer-backend/)

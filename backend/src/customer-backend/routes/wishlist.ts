@@ -63,4 +63,18 @@ export async function wishlistRoutes(app: FastifyInstance) {
 
     return { action: 'added', item };
   });
+
+  // Remove a single wishlist item by id
+  app.delete('/:id', { preHandler: [customerAuthGuard] }, async (request, reply) => {
+    const userId = request.customer!.id;
+    const { id } = request.params as { id: string };
+
+    const [removed] = await db
+      .delete(wishlistItems)
+      .where(and(eq(wishlistItems.id, id), eq(wishlistItems.userId, userId)))
+      .returning();
+
+    if (!removed) return reply.code(404).send({ error: 'Wishlist item not found' });
+    return { success: true };
+  });
 }

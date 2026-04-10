@@ -62,7 +62,8 @@ export async function buildApp() {
     origin: [
       config.ADMIN_ORIGIN,
       'https://farm2cook-admin-frontend.onrender.com',
-      'https://farm2cook-customer.onrender.com',  // customer website
+      'https://farm2cook-customer.onrender.com',  // customer website (planned slug)
+      'https://customer-akxe.onrender.com',  // customer website (actual deployed slug)
       'http://localhost:5173',  // admin local dev
       'http://localhost:3000',  // customer local dev
     ],

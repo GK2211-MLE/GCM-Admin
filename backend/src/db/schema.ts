@@ -404,3 +404,65 @@ export const notifications = pgTable(
   },
   (t) => [index('notifications_tenant_idx').on(t.tenantId)],
 );
+
+/* ════════════════════════════════════════════════════════════════
+   CUSTOMER WEBSITE TABLES
+   Added by customer-backend/ — do not modify
+   ════════════════════════════════════════════════════════════════ */
+
+export const passwordResets = pgTable('password_resets', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').notNull().references(() => appUsers.id),
+  token: varchar('token', { length: 255 }).notNull().unique(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  used: boolean('used').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const wishlistItems = pgTable(
+  'wishlist_items',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id').notNull().references(() => appUsers.id, { onDelete: 'cascade' }),
+    productId: uuid('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('wishlist_user_product_idx').on(t.userId, t.productId)],
+);
+
+export const productReviews = pgTable(
+  'product_reviews',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    productId: uuid('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => appUsers.id),
+    rating: integer('rating').notNull(),
+    title: varchar('title', { length: 255 }),
+    body: text('body'),
+    isVerified: boolean('is_verified').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('reviews_user_product_idx').on(t.userId, t.productId)],
+);
+
+export const contactMessages = pgTable('contact_messages', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  name: varchar('name', { length: 255 }).notNull(),
+  email: varchar('email', { length: 255 }).notNull(),
+  phone: varchar('phone', { length: 20 }),
+  subject: varchar('subject', { length: 255 }),
+  message: text('message').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const newsletterSubs = pgTable(
+  'newsletter_subs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+    email: varchar('email', { length: 255 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('newsletter_email_idx').on(t.tenantId, t.email)],
+);

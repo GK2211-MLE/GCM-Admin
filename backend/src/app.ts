@@ -29,6 +29,20 @@ import { recipeRoutes } from './routes/recipes.js';
 import { analyticsRoutes } from './routes/analytics.js';
 import { notificationRoutes } from './routes/notifications.js';
 
+/* ════════════════════════════════════════════════════════════════
+   CUSTOMER WEBSITE ROUTES (from customer-backend/)
+   Do not modify existing imports above — these are additive only
+   ════════════════════════════════════════════════════════════════ */
+import { customerAuthRoutes } from './customer-backend/routes/auth.js';
+import { customerOrderRoutes } from './customer-backend/routes/orders.js';
+import { customerCheckoutRoutes } from './customer-backend/routes/checkout.js';
+import { addressRoutes } from './customer-backend/routes/addresses.js';
+import { wishlistRoutes } from './customer-backend/routes/wishlist.js';
+import { reviewRoutes } from './customer-backend/routes/reviews.js';
+import { couponRoutes } from './customer-backend/routes/coupons.js';
+import { contactRoutes } from './customer-backend/routes/contact.js';
+import { settingsRoutes as customerSettingsRoutes } from './customer-backend/routes/settings.js';
+
 export async function buildApp() {
   const app = Fastify({
     logger: {
@@ -44,8 +58,9 @@ export async function buildApp() {
     origin: [
       config.ADMIN_ORIGIN,
       'https://farm2cook-admin-frontend.onrender.com',
-      'http://localhost:5173',  // local dev
-      'http://localhost:3000',  // local dev
+      'https://farm2cook-customer.onrender.com',  // customer website
+      'http://localhost:5173',  // admin local dev
+      'http://localhost:3000',  // customer local dev
     ],
     credentials: true,
   });
@@ -80,6 +95,20 @@ export async function buildApp() {
   await app.register(recipeRoutes, { prefix: '/api/recipes' });
   await app.register(analyticsRoutes, { prefix: '/api/analytics' });
   await app.register(notificationRoutes, { prefix: '/api/notifications' });
+
+  /* ════════════════════════════════════════════════════════════════
+     CUSTOMER WEBSITE ROUTES (from customer-backend/)
+     All prefixed with /api/customer/ — separate from admin routes
+     ════════════════════════════════════════════════════════════════ */
+  await app.register(customerAuthRoutes, { prefix: '/api/customer/auth' });
+  await app.register(customerOrderRoutes, { prefix: '/api/customer/orders' });
+  await app.register(customerCheckoutRoutes, { prefix: '/api/customer/checkout' });
+  await app.register(addressRoutes, { prefix: '/api/customer/addresses' });
+  await app.register(wishlistRoutes, { prefix: '/api/customer/wishlist' });
+  await app.register(reviewRoutes, { prefix: '/api/customer/reviews' });
+  await app.register(couponRoutes, { prefix: '/api/customer/coupons' });
+  await app.register(contactRoutes, { prefix: '/api/customer/contact' });
+  await app.register(customerSettingsRoutes, { prefix: '/api/customer/settings' });
 
   return app;
 }

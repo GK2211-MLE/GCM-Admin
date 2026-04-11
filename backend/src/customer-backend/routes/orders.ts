@@ -6,6 +6,10 @@ import { customerAuthGuard } from '../middleware/auth.js';
 
 export async function customerOrderRoutes(app: FastifyInstance) {
   // ── List my orders ──────────────────────────────────────────
+  // Returns each order with its items, AND each item enriched with the
+  // product's current imageUrl + slug + unit so the customer order list
+  // can render real photo thumbnails (instead of generic cube icons) and
+  // link the line items back to the product detail page.
   app.get('/', { preHandler: [customerAuthGuard] }, async (request) => {
     const customerId = request.customer!.id;
 
@@ -15,17 +19,50 @@ export async function customerOrderRoutes(app: FastifyInstance) {
       .where(eq(orders.appUserId, customerId))
       .orderBy(desc(orders.createdAt));
 
-    // Enrich each order with its items
-    const enriched = await Promise.all(
-      rows.map(async (order) => {
-        const items = await db
-          .select()
-          .from(orderItems)
-          .where(eq(orderItems.orderId, order.id));
+    if (rows.length === 0) return { orders: [] };
 
-        return { ...order, items };
-      }),
-    );
+    // 1) All items in one query (in_array on order ids)
+    const orderIds = rows.map((o) => o.id);
+    const allItems = await db
+      .select()
+      .from(orderItems)
+      .where(inArray(orderItems.orderId, orderIds));
+
+    // 2) All referenced products in one query
+    const productIds = Array.from(new Set(allItems.map((i) => i.productId)));
+    const productRows = productIds.length
+      ? await db
+          .select({
+            id: products.id,
+            slug: products.slug,
+            imageUrl: products.imageUrl,
+            unit: products.unit,
+          })
+          .from(products)
+          .where(inArray(products.id, productIds))
+      : [];
+    const productById = new Map(productRows.map((p) => [p.id, p]));
+
+    // 3) Group items by orderId + attach product fields
+    const itemsByOrderId = new Map<string, Array<typeof allItems[number] & { imageUrl: string; slug: string; unit: string }>>();
+    for (const item of allItems) {
+      const product = productById.get(item.productId);
+      const enrichedItem = {
+        ...item,
+        imageUrl: product?.imageUrl ?? '',
+        slug: product?.slug ?? '',
+        unit: product?.unit ?? '',
+      };
+      const arr = itemsByOrderId.get(item.orderId) ?? [];
+      arr.push(enrichedItem);
+      itemsByOrderId.set(item.orderId, arr);
+    }
+
+    // 4) Compose final response
+    const enriched = rows.map((order) => ({
+      ...order,
+      items: itemsByOrderId.get(order.id) ?? [],
+    }));
 
     return { orders: enriched };
   });

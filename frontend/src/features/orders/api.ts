@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { apiClient } from '@/lib/api-client';
 import { queryKeys } from '@/lib/query-keys';
 import type { Order, OrderListItem, OrderFilters, OrderCreate, OrderUpdate } from './types';
@@ -44,6 +45,7 @@ export function useCreateOrder() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.orders.all });
+      toast.success('Order created');
     },
   });
 }
@@ -55,10 +57,12 @@ export function useUpdateOrderStatus() {
       const { data } = await apiClient.patch(`/orders/${id}/status`, { status, notes });
       return data;
     },
-    onSuccess: (_d, { id }) => {
+    onSuccess: (_d, { id, status }) => {
       qc.invalidateQueries({ queryKey: queryKeys.orders.detail(id) });
       qc.invalidateQueries({ queryKey: queryKeys.orders.all });
       qc.invalidateQueries({ queryKey: queryKeys.dashboard.all });
+      const pretty = status.replace(/_/g, ' ');
+      toast.success(`Order marked as ${pretty}`);
     },
   });
 }
@@ -70,9 +74,10 @@ export function useBulkUpdateStatus() {
       const { data } = await apiClient.patch('/orders/bulk/status', { orderIds, status });
       return data;
     },
-    onSuccess: () => {
+    onSuccess: (_d, { orderIds }) => {
       qc.invalidateQueries({ queryKey: queryKeys.orders.all });
       qc.invalidateQueries({ queryKey: queryKeys.dashboard.all });
+      toast.success(`${orderIds.length} order${orderIds.length === 1 ? '' : 's'} updated`);
     },
   });
 }

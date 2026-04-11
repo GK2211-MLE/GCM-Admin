@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { apiClient } from '@/lib/api-client';
 import { queryKeys } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
@@ -531,6 +532,7 @@ export function LocationsPage() {
     mutationFn: (data: LocationFormData) => apiClient.post('/locations', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.settings.locations() });
+      toast.success('Location created');
       setFormOpen(false);
     },
   });
@@ -540,6 +542,7 @@ export function LocationsPage() {
       apiClient.put('/locations/' + id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.settings.locations() });
+      toast.success('Location updated');
       setFormOpen(false);
       setEditingLocation(null);
     },
@@ -549,6 +552,7 @@ export function LocationsPage() {
     mutationFn: (id: string) => apiClient.delete('/locations/' + id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.settings.locations() });
+      toast.success('Location deleted');
       setDeleteOpen(false);
       setDeletingLocation(null);
     },

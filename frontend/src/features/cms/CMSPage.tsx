@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { apiClient } from '@/lib/api-client';
 import {
@@ -154,10 +155,9 @@ function PagesSection() {
       });
       setPages((prev) => prev.map((p) => (p.id === data.page.id ? data.page : p)));
       setSelectedPage(data.page);
-      setSaveMessage('Saved successfully');
-      setTimeout(() => setSaveMessage(''), 3000);
+      toast.success('Page saved');
     } catch {
-      setSaveMessage('Failed to save');
+      // Global axios interceptor already shows the error toast
     } finally {
       setIsSaving(false);
     }
@@ -351,7 +351,7 @@ function RecipesSection() {
 
   async function handleSave() {
     if (!form.title.trim()) {
-      setMessage('Title is required');
+      toast.error('Title is required');
       return;
     }
     setIsSaving(true);
@@ -362,13 +362,15 @@ function RecipesSection() {
         setRecipes((prev) =>
           prev.map((r) => (r.id === editingRecipe.id ? data.recipe : r))
         );
+        toast.success('Recipe updated');
       } else {
         const { data } = await apiClient.post('/recipes', form);
         setRecipes((prev) => [data.recipe, ...prev]);
+        toast.success('Recipe created');
       }
       closeEditor();
     } catch {
-      setMessage('Failed to save recipe');
+      // Global interceptor handles the error toast
     } finally {
       setIsSaving(false);
     }
@@ -379,8 +381,9 @@ function RecipesSection() {
     try {
       await apiClient.delete(`/recipes/${recipe.id}`);
       setRecipes((prev) => prev.filter((r) => r.id !== recipe.id));
+      toast.success('Recipe deleted');
     } catch {
-      alert('Failed to delete recipe');
+      // Global interceptor handles the error toast
     }
   }
 

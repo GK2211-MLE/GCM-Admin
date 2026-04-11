@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { apiClient } from '@/lib/api-client';
 import { queryKeys } from '@/lib/query-keys';
 import type { PaymentRecord, PaymentSummary, PaymentFilters } from './types';
@@ -46,6 +47,7 @@ export function useMarkPaid() {
       qc.invalidateQueries({ queryKey: queryKeys.payments.all });
       qc.invalidateQueries({ queryKey: queryKeys.orders.all });
       qc.invalidateQueries({ queryKey: queryKeys.dashboard.all });
+      toast.success('Order marked as paid');
     },
   });
 }
@@ -61,6 +63,7 @@ export function useRefundPayment() {
       qc.invalidateQueries({ queryKey: queryKeys.payments.all });
       qc.invalidateQueries({ queryKey: queryKeys.orders.all });
       qc.invalidateQueries({ queryKey: queryKeys.dashboard.all });
+      toast.success('Payment refunded');
     },
   });
 }

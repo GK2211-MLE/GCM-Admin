@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef } from '@tanstack/react-table';
+import { toast } from 'sonner';
 import { apiClient } from '@/lib/api-client';
 import { queryKeys } from '@/lib/query-keys';
 import { formatDate } from '@/lib/utils';
@@ -33,8 +34,9 @@ export function UsersPage() {
     mutationFn: async ({ id, action }: { id: string; action: 'approve' | 'reject' }) => {
       await apiClient.patch(`/admin/users/${id}/${action}`);
     },
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.settings.users() });
+      toast.success(vars.action === 'approve' ? 'User approved' : 'User rejected');
     },
   });
 

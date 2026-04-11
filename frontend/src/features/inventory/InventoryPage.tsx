@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef } from '@tanstack/react-table';
+import { toast } from 'sonner';
 import {
   Package, Search, Filter, AlertTriangle, XCircle, CheckCircle2,
   Plus, Minus, ImageIcon, Eye, MapPin,
@@ -287,6 +288,7 @@ export function InventoryPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all });
+      toast.success('Stock updated');
     },
   });
 
@@ -298,8 +300,10 @@ export function InventoryPage() {
       });
       return data;
     },
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all });
+      const sign = vars.adjustment > 0 ? '+' : '';
+      toast.success(`Stock adjusted by ${sign}${vars.adjustment}`);
       setAdjustTarget(null);
     },
   });
@@ -314,6 +318,7 @@ export function InventoryPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all });
+      toast.success('Low stock threshold updated');
     },
   });
 
@@ -336,6 +341,7 @@ export function InventoryPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all });
+      toast.success('Price updated');
     },
   });
 

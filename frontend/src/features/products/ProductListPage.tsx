@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef } from '@tanstack/react-table';
+import { toast } from 'sonner';
 import {
   Plus, Search, Grid3X3, List, Pencil, Trash2, Eye,
   Package, Filter, ChevronLeft, ChevronRight, ImageIcon,
@@ -98,6 +99,7 @@ export function ProductListPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+      toast.success('Product deleted');
       setDeleteTarget(null);
     },
   });

@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { apiClient } from '@/lib/api-client';
 import { queryKeys } from '@/lib/query-keys';
 
@@ -35,7 +36,10 @@ export function useMarkRead() {
   return useMutation({
     mutationFn: (payload: { id?: string; markAll?: boolean }) =>
       apiClient.put('/notifications', payload),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.notifications.all }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: queryKeys.notifications.all });
+      if (vars.markAll) toast.success('All notifications marked as read');
+    },
   });
 }
 
@@ -43,6 +47,9 @@ export function useClearRead() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => apiClient.delete('/notifications/read'),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.notifications.all }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.notifications.all });
+      toast.success('Read notifications cleared');
+    },
   });
 }

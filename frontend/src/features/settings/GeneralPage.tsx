@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import { apiClient } from '@/lib/api-client';
 import { queryKeys } from '@/lib/query-keys';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -226,10 +227,12 @@ export function GeneralPage() {
         onSuccess: () => {
           setSavingSection(null);
           setSuccessSection(section);
+          toast.success(`${section} settings saved`);
           setTimeout(() => setSuccessSection(null), 3000);
         },
         onError: () => {
           setSavingSection(null);
+          // Global axios interceptor already shows the error toast
         },
       },
     );

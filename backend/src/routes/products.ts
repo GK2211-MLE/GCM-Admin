@@ -97,9 +97,28 @@ export async function productRoutes(app: FastifyInstance) {
     // Sync imageUrl to images array
     const images = data.imageUrl ? [data.imageUrl] : undefined;
 
+    // Auto-generate slug from name if missing/blank — fixes products that
+    // were inserted without a slug and 404 on the customer storefront.
+    let slug: string | undefined;
+    if (data.slug !== undefined) {
+      slug = data.slug.trim() || undefined;
+    }
+    if (!slug && data.name) {
+      slug = data.name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+    }
+
     const [product] = await db
       .update(products)
-      .set({ ...data, ...(categoryId ? { categoryId } : {}), ...(images ? { images } : {}), updatedAt: new Date() })
+      .set({
+        ...data,
+        ...(categoryId ? { categoryId } : {}),
+        ...(images ? { images } : {}),
+        ...(slug ? { slug } : {}),
+        updatedAt: new Date(),
+      })
       .where(and(eq(products.id, id), eq(products.tenantId, tenantId)))
       .returning();
 

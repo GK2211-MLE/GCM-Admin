@@ -67,25 +67,33 @@ export async function couponRoutes(app: FastifyInstance) {
     if (promo.maxUses > 0 && promo.usedCount >= promo.maxUses) {
       return { valid: false, error: 'Coupon has reached maximum uses' };
     }
-    if (data.subtotal < promo.minOrder) {
+    // Frontend sends subtotal in DOLLARS. Backend stores money values
+    // (minOrder, discountValue) in CENTS. Convert to a consistent unit
+    // (cents) for the math, then return the discount back in DOLLARS so
+    // the frontend can display/subtract it directly.
+    const subtotalCents = Math.round(data.subtotal * 100);
+
+    if (subtotalCents < promo.minOrder) {
       return {
         valid: false,
         error: `Minimum order of $${(promo.minOrder / 100).toFixed(2)} required`,
       };
     }
 
-    // Calculate discount
-    let discount = 0;
-    if (promo.discountType === 'percentage') {
-      discount = Math.round(data.subtotal * (promo.discountValue / 100));
+    // Calculate discount in CENTS. Accept both 'percent' (admin UI) and
+    // 'percentage' (legacy) — the existing seed uses 'percent'.
+    let discountCents = 0;
+    const isPercent = promo.discountType === 'percent' || promo.discountType === 'percentage';
+    if (isPercent) {
+      discountCents = Math.round(subtotalCents * (promo.discountValue / 100));
     } else {
-      // fixed amount
-      discount = Math.min(promo.discountValue, data.subtotal);
+      // Fixed amount — discountValue is already in cents
+      discountCents = Math.min(promo.discountValue, subtotalCents);
     }
 
     return {
       valid: true,
-      discount,
+      discount: discountCents / 100, // back to dollars for the frontend
       code: promo.code,
       description: promo.description,
       discountType: promo.discountType,

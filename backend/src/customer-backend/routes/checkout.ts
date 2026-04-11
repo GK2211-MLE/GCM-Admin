@@ -83,7 +83,9 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
           subtotal >= coupon.minOrder;
 
         if (isValid) {
-          if (coupon.discountType === 'percentage') {
+          // Accept both 'percent' (admin UI) and 'percentage' (legacy)
+          const isPercent = coupon.discountType === 'percent' || coupon.discountType === 'percentage';
+          if (isPercent) {
             discountAmount = Math.round(subtotal * (coupon.discountValue / 100));
           } else {
             // fixed amount in cents

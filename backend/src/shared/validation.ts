@@ -86,6 +86,7 @@ export type UpdateCategoryInput = z.infer<typeof updateCategorySchema>;
 
 export const createProductSchema = z.object({
   name: z.string().min(1).max(200),
+  slug: z.string().optional(),
   description: z.string().default(''),
   category: z.string().min(1),
   unit: z.string().default('lb'),

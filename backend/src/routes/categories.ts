@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { eq, and, asc, count } from 'drizzle-orm';
+import { eq, and, asc, count, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { categories, products } from '../db/schema.js';
 import { authGuard } from '../middleware/auth.js';
@@ -11,25 +11,65 @@ function toSlug(name: string): string {
 }
 
 export async function categoryRoutes(app: FastifyInstance) {
-  // List all categories for tenant (public — used by bot too)
+  // List all categories for tenant (public — used by storefront homepage + bot)
+  // Includes a productCount aggregate (joined on products.category = categories.slug)
+  // so the customer site can show "Chicken — 9 products" without an N+1 fetch.
   app.get('/', async (request) => {
     const query = request.query as { tenantId?: string };
 
     let rows;
     if (query.tenantId) {
       rows = await db
-        .select()
+        .select({
+          id: categories.id,
+          tenantId: categories.tenantId,
+          name: categories.name,
+          slug: categories.slug,
+          description: categories.description,
+          imageUrl: categories.imageUrl,
+          active: categories.active,
+          sortOrder: categories.sortOrder,
+          displayOrder: categories.displayOrder,
+          createdAt: categories.createdAt,
+          updatedAt: categories.updatedAt,
+          productCount: sql<number>`(
+            SELECT COUNT(*) FROM ${products}
+            WHERE ${products.category} = ${categories.slug}
+              AND ${products.tenantId} = ${categories.tenantId}
+              AND ${products.active} = true
+          )`.as('product_count'),
+        })
         .from(categories)
         .where(eq(categories.tenantId, query.tenantId))
         .orderBy(asc(categories.sortOrder));
     } else {
       rows = await db
-        .select()
+        .select({
+          id: categories.id,
+          tenantId: categories.tenantId,
+          name: categories.name,
+          slug: categories.slug,
+          description: categories.description,
+          imageUrl: categories.imageUrl,
+          active: categories.active,
+          sortOrder: categories.sortOrder,
+          displayOrder: categories.displayOrder,
+          createdAt: categories.createdAt,
+          updatedAt: categories.updatedAt,
+          productCount: sql<number>`(
+            SELECT COUNT(*) FROM ${products}
+            WHERE ${products.category} = ${categories.slug}
+              AND ${products.tenantId} = ${categories.tenantId}
+              AND ${products.active} = true
+          )`.as('product_count'),
+        })
         .from(categories)
         .orderBy(asc(categories.sortOrder));
     }
 
-    return { categories: rows };
+    // Coerce productCount to a JS number — pg returns COUNT(*) as a string
+    const result = rows.map((r) => ({ ...r, productCount: Number(r.productCount) }));
+    return { categories: result };
   });
 
   // Get single category

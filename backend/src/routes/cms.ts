@@ -6,11 +6,34 @@ import { authGuard } from '../middleware/auth.js';
 import { getTenantId } from '../middleware/tenant.js';
 
 export async function cmsRoutes(app: FastifyInstance) {
-  // List all pages
-  app.get('/', { preHandler: [authGuard] }, async (request) => {
-    const tenantId = getTenantId(request);
-    const pages = await db.select().from(cmsPages).where(eq(cmsPages.tenantId, tenantId));
+  // List all pages — admin sees drafts + published, customer site sees
+  // only published. The customer site is single-tenant so it doesn't pass
+  // a tenantId; we return all published pages across tenants.
+  app.get('/', async (request) => {
+    const isAdmin = !!request.headers.authorization;
+    if (isAdmin) {
+      // Admin path: keep tenant scoping for safety.
+      try {
+        const tenantId = getTenantId(request);
+        const pages = await db.select().from(cmsPages).where(eq(cmsPages.tenantId, tenantId));
+        return { pages };
+      } catch {
+        // No tenant in token (shouldn't happen) — fall through to public.
+      }
+    }
+    const pages = await db.select().from(cmsPages).where(eq(cmsPages.isPublished, true));
     return { pages };
+  });
+
+  // Get a single page by slug — PUBLIC. Used by the customer site for
+  // about/faq/privacy/terms/returns/shipping etc.
+  app.get('/by-slug/:slug', async (request, reply) => {
+    const { slug } = request.params as { slug: string };
+    const [page] = await db.select().from(cmsPages)
+      .where(and(eq(cmsPages.slug, slug), eq(cmsPages.isPublished, true)))
+      .limit(1);
+    if (!page) return reply.code(404).send({ error: 'Page not found' });
+    return { page };
   });
 
   // Update page

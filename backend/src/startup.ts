@@ -488,6 +488,31 @@ export async function runStartup(): Promise<string> {
   await sql.unsafe(migration);
   console.log('[startup] Migrations complete.');
 
+  // Idempotent CMS slug bootstrap. Runs on every boot, NOT inside the
+  // first-install block, so existing deployments also get the standard
+  // page slugs in their CMS sidebar. Each row is unpublished by default
+  // so the customer site falls back to its hardcoded copy until an admin
+  // fills the row in and toggles "Published".
+  const tenantsForCms = await sql`SELECT id FROM tenants LIMIT 1`;
+  if (tenantsForCms.length > 0) {
+    const cmsTenantId = tenantsForCms[0].id;
+    const standardSlugs = [
+      { slug: 'about',    title: 'About Us' },
+      { slug: 'privacy',  title: 'Privacy Policy' },
+      { slug: 'terms',    title: 'Terms & Conditions' },
+      { slug: 'returns',  title: 'Returns & Refunds' },
+      { slug: 'shipping', title: 'Shipping & Delivery' },
+      { slug: 'faq',      title: 'FAQ' },
+    ];
+    for (const p of standardSlugs) {
+      await sql`
+        INSERT INTO cms_pages (tenant_id, slug, title, content, is_published)
+        VALUES (${cmsTenantId}, ${p.slug}, ${p.title}, '', false)
+        ON CONFLICT (tenant_id, slug) DO NOTHING
+      `;
+    }
+  }
+
   // Check if seed is needed
   const tenants = await sql`SELECT id FROM tenants LIMIT 1`;
   if (tenants.length > 0) {

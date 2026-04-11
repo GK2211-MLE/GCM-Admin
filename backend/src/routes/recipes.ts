@@ -6,16 +6,37 @@ import { authGuard } from '../middleware/auth.js';
 import { getTenantId } from '../middleware/tenant.js';
 
 export async function recipeRoutes(app: FastifyInstance) {
-  // List all recipes
-  app.get('/', { preHandler: [authGuard] }, async (request) => {
-    const tenantId = getTenantId(request);
-    const rows = await db.select().from(recipes)
-      .where(eq(recipes.tenantId, tenantId))
-      .orderBy(desc(recipes.createdAt));
+  // List recipes — PUBLIC. Authenticated callers (admin) see drafts too;
+  // anonymous callers (customer site) only see published recipes. The
+  // customer site doesn't pass a tenantId; in single-tenant deployments
+  // this returns the only tenant's recipes which is the desired behavior.
+  app.get('/', async (request) => {
+    const query = request.query as { tenantId?: string; published?: string };
+    const isAdmin = !!request.headers.authorization;
+    const conditions = [];
+    if (query.tenantId) conditions.push(eq(recipes.tenantId, query.tenantId));
+    if (!isAdmin) conditions.push(eq(recipes.isPublished, true));
+    if (query.published === 'true') conditions.push(eq(recipes.isPublished, true));
+
+    const rows = conditions.length > 0
+      ? await db.select().from(recipes).where(and(...conditions)).orderBy(desc(recipes.createdAt))
+      : await db.select().from(recipes).orderBy(desc(recipes.createdAt));
     return { recipes: rows };
   });
 
-  // Get single recipe
+  // Get single recipe by slug — PUBLIC. Used by the customer recipes page.
+  // Defined BEFORE /:id so the literal "by-slug" prefix isn't captured by
+  // the UUID route.
+  app.get('/by-slug/:slug', async (request, reply) => {
+    const { slug } = request.params as { slug: string };
+    const [recipe] = await db.select().from(recipes)
+      .where(and(eq(recipes.slug, slug), eq(recipes.isPublished, true)))
+      .limit(1);
+    if (!recipe) return reply.code(404).send({ error: 'Recipe not found' });
+    return { recipe };
+  });
+
+  // Get single recipe by id — admin-only (drafts can be inspected here).
   app.get('/:id', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };

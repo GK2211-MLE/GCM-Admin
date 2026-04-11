@@ -76,13 +76,13 @@ export function CMSPage() {
       <PageHeader title="CMS" description="Manage website content" />
 
       {/* Tabs */}
-      <div className="flex gap-1 mt-4 border-b">
+      <div className="flex gap-1 mt-4 border-b border-(--border-default)">
         <button
           onClick={() => setActiveTab('pages')}
           className={`px-5 py-2.5 text-sm font-medium rounded-t-lg transition-colors ${
             activeTab === 'pages'
-              ? 'bg-white border border-b-white -mb-px text-blue-600'
-              : 'text-gray-500 hover:text-gray-700'
+              ? 'bg-(--surface-secondary) border border-(--border-default) border-b-(--surface-secondary) -mb-px text-blue-500'
+              : 'text-(--text-tertiary) hover:text-(--text-secondary)'
           }`}
         >
           <FileEdit className="h-4 w-4 inline mr-2" />
@@ -92,8 +92,8 @@ export function CMSPage() {
           onClick={() => setActiveTab('recipes')}
           className={`px-5 py-2.5 text-sm font-medium rounded-t-lg transition-colors ${
             activeTab === 'recipes'
-              ? 'bg-white border border-b-white -mb-px text-blue-600'
-              : 'text-gray-500 hover:text-gray-700'
+              ? 'bg-(--surface-secondary) border border-(--border-default) border-b-(--surface-secondary) -mb-px text-blue-500'
+              : 'text-(--text-tertiary) hover:text-(--text-secondary)'
           }`}
         >
           <ChefHat className="h-4 w-4 inline mr-2" />
@@ -166,7 +166,7 @@ function PagesSection() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+        <Loader2 className="h-8 w-8 animate-spin text-(--text-tertiary)" />
       </div>
     );
   }
@@ -175,21 +175,21 @@ function PagesSection() {
     <div className="flex gap-6 mt-6">
       {/* Sidebar - page list */}
       <div className="w-64 shrink-0">
-        <div className="bg-white rounded-lg border shadow-sm">
-          <div className="p-3 border-b">
-            <h3 className="font-semibold text-sm text-gray-500 uppercase tracking-wide">Pages</h3>
+        <div className="bg-(--surface-secondary) rounded-lg border border-(--border-default) shadow-sm">
+          <div className="p-3 border-b border-(--border-default)">
+            <h3 className="font-semibold text-sm text-(--text-tertiary) uppercase tracking-wide">Pages</h3>
           </div>
-          <div className="divide-y">
+          <div className="divide-y divide-(--border-default)">
             {pages.map((page) => (
               <button
                 key={page.id}
                 onClick={() => selectPage(page)}
-                className={`w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors ${
-                  selectedPage?.id === page.id ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''
+                className={`w-full text-left px-4 py-3 hover:bg-(--surface-tertiary)/50 transition-colors ${
+                  selectedPage?.id === page.id ? 'bg-blue-500/10 border-l-2 border-l-blue-500' : ''
                 }`}
               >
                 <div className="flex items-center gap-2">
-                  <FileEdit className="h-4 w-4 text-gray-400" />
+                  <FileEdit className="h-4 w-4 text-(--text-tertiary)" />
                   <span className="font-medium text-sm">{SLUG_LABELS[page.slug] || page.title}</span>
                 </div>
                 <div className="flex items-center gap-1 mt-1 ml-6">
@@ -198,7 +198,7 @@ function PagesSection() {
                       <Eye className="h-3 w-3" /> Published
                     </span>
                   ) : (
-                    <span className="text-xs text-gray-400 flex items-center gap-1">
+                    <span className="text-xs text-(--text-tertiary) flex items-center gap-1">
                       <EyeOff className="h-3 w-3" /> Draft
                     </span>
                   )}
@@ -212,9 +212,9 @@ function PagesSection() {
       {/* Editor */}
       <div className="flex-1">
         {selectedPage ? (
-          <div className="bg-white rounded-lg border shadow-sm p-6">
+          <div className="bg-(--surface-secondary) rounded-lg border border-(--border-default) shadow-sm p-6">
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-lg font-semibold">
+              <h2 className="text-lg font-semibold text-(--text-primary)">
                 Edit: {SLUG_LABELS[selectedPage.slug] || selectedPage.title}
               </h2>
               <div className="flex items-center gap-3">
@@ -244,22 +244,22 @@ function PagesSection() {
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+                <label className="block text-sm font-medium text-(--text-secondary) mb-1">Title</label>
                 <input
                   type="text"
                   value={editTitle}
                   onChange={(e) => setEditTitle(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  className="w-full px-3 py-2 border border-(--border-default) bg-(--surface-primary) text-(--text-primary) placeholder:text-(--text-tertiary) rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Content</label>
+                <label className="block text-sm font-medium text-(--text-secondary) mb-1">Content</label>
                 <textarea
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
                   rows={16}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-mono text-sm leading-relaxed resize-y"
+                  className="w-full px-3 py-2 border border-(--border-default) bg-(--surface-primary) text-(--text-primary) placeholder:text-(--text-tertiary) rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-mono text-sm leading-relaxed resize-y"
                 />
               </div>
 
@@ -271,20 +271,20 @@ function PagesSection() {
                   onChange={(e) => setEditPublished(e.target.checked)}
                   className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
-                <label htmlFor="published" className="text-sm text-gray-700">
+                <label htmlFor="published" className="text-sm text-(--text-secondary)">
                   Published (visible to customers)
                 </label>
               </div>
             </div>
 
-            <div className="mt-4 text-xs text-gray-400">
-              Slug: <code className="bg-gray-100 px-1 py-0.5 rounded">{selectedPage.slug}</code>
+            <div className="mt-4 text-xs text-(--text-tertiary)">
+              Slug: <code className="bg-(--surface-tertiary) text-(--text-primary) px-1 py-0.5 rounded">{selectedPage.slug}</code>
               {' | '}
               Last updated: {new Date(selectedPage.updatedAt).toLocaleString()}
             </div>
           </div>
         ) : (
-          <div className="bg-white rounded-lg border shadow-sm p-12 text-center text-gray-400">
+          <div className="bg-(--surface-secondary) rounded-lg border border-(--border-default) shadow-sm p-12 text-center text-(--text-tertiary)">
             Select a page from the sidebar to edit
           </div>
         )}
@@ -402,7 +402,7 @@ function RecipesSection() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+        <Loader2 className="h-8 w-8 animate-spin text-(--text-tertiary)" />
       </div>
     );
   }
@@ -411,25 +411,25 @@ function RecipesSection() {
   if (showEditor) {
     return (
       <div className="mt-6">
-        <div className="bg-white rounded-lg border shadow-sm p-6 max-w-3xl mx-auto">
+        <div className="bg-(--surface-secondary) rounded-lg border border-(--border-default) shadow-sm p-6 max-w-3xl mx-auto">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-lg font-semibold">
+            <h2 className="text-lg font-semibold text-(--text-primary)">
               {editingRecipe ? 'Edit Recipe' : 'New Recipe'}
             </h2>
-            <button onClick={closeEditor} className="p-1 hover:bg-gray-100 rounded">
-              <X className="h-5 w-5 text-gray-400" />
+            <button onClick={closeEditor} className="p-1 hover:bg-(--surface-tertiary) text-(--text-secondary) rounded">
+              <X className="h-5 w-5 text-(--text-tertiary)" />
             </button>
           </div>
 
           <div className="space-y-4">
             {/* Title */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+              <label className="block text-sm font-medium text-(--text-secondary) mb-1">Title</label>
               <input
                 type="text"
                 value={form.title}
                 onChange={(e) => updateForm('title', e.target.value)}
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                className="w-full px-3 py-2 border border-(--border-default) bg-(--surface-primary) text-(--text-primary) placeholder:text-(--text-tertiary) rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                 placeholder="Recipe title"
               />
             </div>
@@ -437,11 +437,11 @@ function RecipesSection() {
             {/* Category + Image URL */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                <label className="block text-sm font-medium text-(--text-secondary) mb-1">Category</label>
                 <select
                   value={form.category}
                   onChange={(e) => updateForm('category', e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
+                  className="w-full px-3 py-2 border border-(--border-default) bg-(--surface-primary) text-(--text-primary) placeholder:text-(--text-tertiary) rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                 >
                   {RECIPE_CATEGORIES.map((cat) => (
                     <option key={cat} value={cat}>
@@ -451,12 +451,12 @@ function RecipesSection() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Image URL</label>
+                <label className="block text-sm font-medium text-(--text-secondary) mb-1">Image URL</label>
                 <input
                   type="text"
                   value={form.imageUrl}
                   onChange={(e) => updateForm('imageUrl', e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  className="w-full px-3 py-2 border border-(--border-default) bg-(--surface-primary) text-(--text-primary) placeholder:text-(--text-tertiary) rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                   placeholder="https://..."
                 />
               </div>
@@ -464,39 +464,39 @@ function RecipesSection() {
 
             {/* Description */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <label className="block text-sm font-medium text-(--text-secondary) mb-1">Description</label>
               <textarea
                 value={form.description}
                 onChange={(e) => updateForm('description', e.target.value)}
                 rows={3}
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-y"
+                className="w-full px-3 py-2 border border-(--border-default) bg-(--surface-primary) text-(--text-primary) placeholder:text-(--text-tertiary) rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-y"
                 placeholder="Brief description of the recipe"
               />
             </div>
 
             {/* Ingredients */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-(--text-secondary) mb-1">
                 Ingredients{' '}
-                <span className="text-gray-400 font-normal">(comma-separated)</span>
+                <span className="text-(--text-tertiary) font-normal">(comma-separated)</span>
               </label>
               <textarea
                 value={form.ingredients}
                 onChange={(e) => updateForm('ingredients', e.target.value)}
                 rows={4}
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-y"
+                className="w-full px-3 py-2 border border-(--border-default) bg-(--surface-primary) text-(--text-primary) placeholder:text-(--text-tertiary) rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-y"
                 placeholder="500g chicken breast, 2 onions, 3 cloves garlic, ..."
               />
             </div>
 
             {/* Instructions */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Instructions</label>
+              <label className="block text-sm font-medium text-(--text-secondary) mb-1">Instructions</label>
               <textarea
                 value={form.instructions}
                 onChange={(e) => updateForm('instructions', e.target.value)}
                 rows={6}
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-y"
+                className="w-full px-3 py-2 border border-(--border-default) bg-(--surface-primary) text-(--text-primary) placeholder:text-(--text-tertiary) rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-y"
                 placeholder="Step-by-step cooking instructions..."
               />
             </div>
@@ -504,32 +504,32 @@ function RecipesSection() {
             {/* Prep Time, Cook Time, Servings */}
             <div className="grid grid-cols-3 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Prep Time</label>
+                <label className="block text-sm font-medium text-(--text-secondary) mb-1">Prep Time</label>
                 <input
                   type="text"
                   value={form.prepTime}
                   onChange={(e) => updateForm('prepTime', e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  className="w-full px-3 py-2 border border-(--border-default) bg-(--surface-primary) text-(--text-primary) placeholder:text-(--text-tertiary) rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                   placeholder="15 mins"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Cook Time</label>
+                <label className="block text-sm font-medium text-(--text-secondary) mb-1">Cook Time</label>
                 <input
                   type="text"
                   value={form.cookTime}
                   onChange={(e) => updateForm('cookTime', e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  className="w-full px-3 py-2 border border-(--border-default) bg-(--surface-primary) text-(--text-primary) placeholder:text-(--text-tertiary) rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                   placeholder="30 mins"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Servings</label>
+                <label className="block text-sm font-medium text-(--text-secondary) mb-1">Servings</label>
                 <input
                   type="text"
                   value={form.servings}
                   onChange={(e) => updateForm('servings', e.target.value)}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  className="w-full px-3 py-2 border border-(--border-default) bg-(--surface-primary) text-(--text-primary) placeholder:text-(--text-tertiary) rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                   placeholder="4"
                 />
               </div>
@@ -544,21 +544,21 @@ function RecipesSection() {
                 onChange={(e) => updateForm('isPublished', e.target.checked)}
                 className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
               />
-              <label htmlFor="recipe-published" className="text-sm text-gray-700">
+              <label htmlFor="recipe-published" className="text-sm text-(--text-secondary)">
                 Published (visible to customers)
               </label>
             </div>
           </div>
 
           {/* Actions */}
-          <div className="flex items-center justify-between mt-6 pt-4 border-t">
+          <div className="flex items-center justify-between mt-6 pt-4 border-t border-(--border-default)">
             {message && (
               <span className="text-sm text-red-600">{message}</span>
             )}
             <div className="flex items-center gap-3 ml-auto">
               <button
                 onClick={closeEditor}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                className="px-4 py-2 text-sm font-medium text-(--text-secondary) bg-(--surface-tertiary) rounded-lg hover:bg-(--surface-tertiary)/70 transition-colors"
               >
                 Cancel
               </button>
@@ -585,7 +585,7 @@ function RecipesSection() {
   return (
     <div className="mt-6">
       <div className="flex items-center justify-between mb-4">
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-(--text-tertiary)">
           {recipes.length} recipe{recipes.length !== 1 ? 's' : ''}
         </p>
         <button
@@ -598,19 +598,19 @@ function RecipesSection() {
       </div>
 
       {recipes.length === 0 ? (
-        <div className="bg-white rounded-lg border shadow-sm p-12 text-center">
-          <ChefHat className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-          <p className="text-gray-500">No recipes yet. Create your first recipe!</p>
+        <div className="bg-(--surface-secondary) rounded-lg border border-(--border-default) shadow-sm p-12 text-center">
+          <ChefHat className="h-12 w-12 text-(--text-tertiary) mx-auto mb-3" />
+          <p className="text-(--text-tertiary)">No recipes yet. Create your first recipe!</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {recipes.map((recipe) => (
             <div
               key={recipe.id}
-              className="bg-white rounded-lg border shadow-sm overflow-hidden group hover:shadow-md transition-shadow"
+              className="bg-(--surface-secondary) rounded-lg border border-(--border-default) shadow-sm overflow-hidden group hover:shadow-md transition-shadow"
             >
               {/* Image */}
-              <div className="aspect-video bg-gray-100 relative overflow-hidden">
+              <div className="aspect-video bg-(--surface-tertiary) relative overflow-hidden">
                 {recipe.imageUrl ? (
                   <img
                     src={recipe.imageUrl}
@@ -619,13 +619,13 @@ function RecipesSection() {
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
-                    <ChefHat className="h-10 w-10 text-gray-300" />
+                    <ChefHat className="h-10 w-10 text-(--text-tertiary)" />
                   </div>
                 )}
                 {/* Category badge */}
                 <span
                   className={`absolute top-2 right-2 text-xs font-semibold px-2 py-1 rounded-md ${
-                    categoryColor[recipe.category] || 'bg-gray-100 text-gray-800'
+                    categoryColor[recipe.category] || 'bg-(--surface-tertiary) text-(--text-primary)'
                   }`}
                 >
                   {recipe.category}
@@ -640,8 +640,8 @@ function RecipesSection() {
 
               {/* Info */}
               <div className="p-4">
-                <h3 className="font-semibold text-sm mb-2 line-clamp-1">{recipe.title}</h3>
-                <div className="flex items-center gap-3 text-xs text-gray-500 mb-3">
+                <h3 className="font-semibold text-sm text-(--text-primary) mb-2 line-clamp-1">{recipe.title}</h3>
+                <div className="flex items-center gap-3 text-xs text-(--text-tertiary) mb-3">
                   {recipe.prepTime && (
                     <span className="flex items-center gap-1">
                       <Clock className="h-3 w-3" />

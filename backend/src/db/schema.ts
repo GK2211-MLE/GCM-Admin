@@ -442,7 +442,7 @@ export const productReviews = pgTable(
     isVerified: boolean('is_verified').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('reviews_user_product_idx').on(t.userId, t.productId)],
+  (t) => [uniqueIndex('product_reviews_user_product_idx').on(t.userId, t.productId)],
 );
 
 export const contactMessages = pgTable('contact_messages', {

@@ -10,6 +10,8 @@ interface User {
   email: string;
   name: string;
   role: string;
+  assignedLocationId?: string | null;
+  assignedLocationName?: string | null;
 }
 
 interface AuthState {

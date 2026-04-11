@@ -1,23 +1,83 @@
-import type { FastifyInstance } from 'fastify';
-import { eq, and, asc, ilike, or } from 'drizzle-orm';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
+import { eq, and, asc, ilike, or, sql, inArray, isNull, notExists } from 'drizzle-orm';
+import jwt from 'jsonwebtoken';
 import { db } from '../db/client.js';
-import { products, categories } from '../db/schema.js';
-import { authGuard } from '../middleware/auth.js';
+import { products, categories, productLocations, locations } from '../db/schema.js';
+import { authGuard, getLocationScope } from '../middleware/auth.js';
 import { getTenantId } from '../middleware/tenant.js';
-import { createProductSchema, updateProductSchema } from '../shared/index.js';
+import { config } from '../config.js';
+import {
+  createProductSchema,
+  updateProductSchema,
+  ROLES,
+  normalizeLegacyRole,
+} from '../shared/index.js';
+
+/**
+ * Reads the optional bearer token from the request and returns the
+ * forced location scope (if the caller is a non-admin admin user).
+ *
+ * Returns null for admin / unauthenticated callers — meaning "no scope
+ * pinning". The customer storefront calls these endpoints anonymously
+ * and must keep working, so we never throw on missing/invalid tokens.
+ */
+function tryGetForcedScope(request: FastifyRequest): string | null {
+  const authHeader = request.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) return null;
+  try {
+    const raw = jwt.verify(authHeader.slice(7), config.JWT_SECRET) as {
+      role?: string;
+      assignedLocationId?: string | null;
+    };
+    if (!raw.role) return null;
+    const role = normalizeLegacyRole(raw.role);
+    if (role === ROLES.ADMIN) return null;
+    return raw.assignedLocationId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Lookup the location IDs a product is currently tagged for. */
+async function getProductLocationIds(productId: string): Promise<string[]> {
+  const rows = await db
+    .select({ locationId: productLocations.locationId })
+    .from(productLocations)
+    .where(eq(productLocations.productId, productId));
+  return rows.map((r) => r.locationId);
+}
+
+/** Replace the product_locations rows for a product. */
+async function setProductLocations(productId: string, locationIds: string[]): Promise<void> {
+  await db.delete(productLocations).where(eq(productLocations.productId, productId));
+  if (locationIds.length === 0) return;
+  await db.insert(productLocations).values(
+    locationIds.map((locationId) => ({ productId, locationId })),
+  );
+}
 
 export async function productRoutes(app: FastifyInstance) {
   // List distinct categories from all products
   app.get('/categories', async () => {
-    const rows = await db.select({ category: products.category }).from(products).groupBy(products.category).orderBy(asc(products.category));
-
+    const rows = await db
+      .select({ category: products.category })
+      .from(products)
+      .groupBy(products.category)
+      .orderBy(asc(products.category));
     return { categories: rows.map((r) => r.category) };
   });
 
-  // List all products (public for bot; admin filtered by tenant).
-  // Supports an optional `limit` query param so the customer storefront
-  // can ask for just the first N products (e.g. ?limit=6 for the homepage
-  // bestseller carousel) without downloading the entire catalogue.
+  // List products. PUBLIC endpoint — used by both the admin frontend AND the
+  // customer storefront. Per-location filtering rules:
+  //
+  //   1. If the caller is an authenticated non-admin admin user, force their
+  //      assigned location no matter what they pass in the query string. This
+  //      stops a Plano store_manager from snooping the Frisco catalog.
+  //   2. Otherwise honor `?locationId=X` (used by the customer site after
+  //      the shopper picks a store).
+  //   3. A product is "available at" a location when EITHER it has a row in
+  //      product_locations for that location, OR it has zero rows at all
+  //      (the catalog-wide default).
   app.get('/', async (request) => {
     const query = request.query as {
       tenantId?: string;
@@ -26,21 +86,17 @@ export async function productRoutes(app: FastifyInstance) {
       search?: string;
       limit?: string;
       featured?: string;
+      locationId?: string;
     };
 
+    const forcedScope = tryGetForcedScope(request);
+    const effectiveLocationId = forcedScope ?? query.locationId ?? null;
+
     let conditions = [];
-    if (query.tenantId) {
-      conditions.push(eq(products.tenantId, query.tenantId));
-    }
-    if (query.category) {
-      conditions.push(eq(products.category, query.category));
-    }
-    if (query.active !== undefined) {
-      conditions.push(eq(products.active, query.active === 'true'));
-    }
-    if (query.featured !== undefined) {
-      conditions.push(eq(products.featured, query.featured === 'true'));
-    }
+    if (query.tenantId) conditions.push(eq(products.tenantId, query.tenantId));
+    if (query.category) conditions.push(eq(products.category, query.category));
+    if (query.active !== undefined) conditions.push(eq(products.active, query.active === 'true'));
+    if (query.featured !== undefined) conditions.push(eq(products.featured, query.featured === 'true'));
     if (query.search) {
       const term = `%${query.search}%`;
       conditions.push(
@@ -52,8 +108,17 @@ export async function productRoutes(app: FastifyInstance) {
       );
     }
 
-    // Parse + clamp the limit. Defaults to no limit (returns all rows).
-    // Cap at 200 to prevent abuse.
+    // Location visibility predicate, applied via raw SQL EXISTS so it
+    // composes cleanly with the existing where clause.
+    if (effectiveLocationId) {
+      conditions.push(
+        sql`(
+          NOT EXISTS (SELECT 1 FROM product_locations pl WHERE pl.product_id = ${products.id})
+          OR EXISTS (SELECT 1 FROM product_locations pl WHERE pl.product_id = ${products.id} AND pl.location_id = ${effectiveLocationId})
+        )`,
+      );
+    }
+
     const parsedLimit = query.limit ? Math.max(1, Math.min(200, parseInt(query.limit, 10))) : null;
 
     let qb = conditions.length > 0
@@ -68,37 +133,94 @@ export async function productRoutes(app: FastifyInstance) {
     return { products: rows };
   });
 
-  // Get single product
+  // Get single product. Includes the locationIds the product is tagged for
+  // (empty array = available at all locations). Same scope rule as the list
+  // endpoint: a non-admin admin user gets a 404 for a product that is not
+  // visible at their assigned location.
   app.get('/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
     const [product] = await db.select().from(products).where(eq(products.id, id)).limit(1);
     if (!product) return reply.code(404).send({ error: 'Product not found' });
-    return { product };
+
+    const locationIds = await getProductLocationIds(product.id);
+
+    const forcedScope = tryGetForcedScope(request);
+    if (forcedScope) {
+      const visible = locationIds.length === 0 || locationIds.includes(forcedScope);
+      if (!visible) return reply.code(404).send({ error: 'Product not found' });
+    }
+
+    return { product: { ...product, locationIds } };
   });
 
-  // Create product (auth required)
-  app.post('/', { preHandler: [authGuard] }, async (request) => {
+  // Create product (admin or store_manager).
+  // Non-admin callers can only create products that are pinned to their
+  // assigned location and may NOT create catalog-wide products.
+  app.post('/', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
     const data = createProductSchema.parse(request.body);
+    const role = request.user!.role;
+
+    if (role === ROLES.STORE_STAFF) {
+      return reply.code(403).send({ error: 'Store staff cannot create products' });
+    }
+
+    // Resolve the desired location set.
+    let locationIdsToWrite: string[];
+    if (role === ROLES.ADMIN) {
+      // Admin: empty / undefined = "all locations" (no rows). Otherwise
+      // verify each ID belongs to this tenant.
+      locationIdsToWrite = data.locationIds ?? [];
+    } else {
+      // store_manager: must include their assigned location and ONLY their
+      // assigned location. We silently override whatever the client sent.
+      const myLoc = request.user!.assignedLocationId;
+      if (!myLoc) {
+        return reply.code(403).send({ error: 'Account is not assigned to a location' });
+      }
+      locationIdsToWrite = [myLoc];
+    }
+
+    // Validate every locationId belongs to this tenant.
+    if (locationIdsToWrite.length > 0) {
+      const validLocs = await db
+        .select({ id: locations.id })
+        .from(locations)
+        .where(and(eq(locations.tenantId, tenantId), inArray(locations.id, locationIdsToWrite)));
+      if (validLocs.length !== locationIdsToWrite.length) {
+        return reply.code(400).send({ error: 'One or more locations are invalid for this tenant' });
+      }
+    }
 
     // Auto-resolve categoryId from category slug
     let categoryId: string | undefined;
     if (data.category) {
-      const [cat] = await db.select({ id: categories.id }).from(categories)
+      const [cat] = await db
+        .select({ id: categories.id })
+        .from(categories)
         .where(and(eq(categories.tenantId, tenantId), ilike(categories.slug, data.category)))
         .limit(1);
       if (cat) categoryId = cat.id;
     }
 
-    // Sync imageUrl to images array
     const images = data.imageUrl ? [data.imageUrl] : undefined;
+
+    // Strip locationIds from the insert payload — it's not a column on products.
+    const { locationIds: _ignoreLocationIds, ...productInsert } = data;
 
     const [product] = await db
       .insert(products)
-      .values({ ...data, tenantId, categoryId: categoryId ?? null, ...(images ? { images } : {}) })
+      .values({
+        ...productInsert,
+        tenantId,
+        categoryId: categoryId ?? null,
+        ...(images ? { images } : {}),
+      })
       .returning();
 
-    return { product };
+    await setProductLocations(product.id, locationIdsToWrite);
+
+    return { product: { ...product, locationIds: locationIdsToWrite } };
   });
 
   // Update product
@@ -106,21 +228,64 @@ export async function productRoutes(app: FastifyInstance) {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };
     const data = updateProductSchema.parse(request.body);
+    const role = request.user!.role;
 
-    // Auto-resolve categoryId from category slug
+    if (role === ROLES.STORE_STAFF) {
+      return reply.code(403).send({ error: 'Store staff cannot edit products' });
+    }
+
+    // Verify the product exists and is visible to this caller.
+    const [existing] = await db
+      .select()
+      .from(products)
+      .where(and(eq(products.id, id), eq(products.tenantId, tenantId)))
+      .limit(1);
+    if (!existing) return reply.code(404).send({ error: 'Product not found' });
+
+    if (role !== ROLES.ADMIN) {
+      const myLoc = request.user!.assignedLocationId;
+      if (!myLoc) return reply.code(403).send({ error: 'Account is not assigned to a location' });
+      const currentLocs = await getProductLocationIds(id);
+      // Non-admin can only edit products that are tagged to their location.
+      // Catalog-wide products (no rows) are admin-only territory.
+      if (currentLocs.length === 0 || !currentLocs.includes(myLoc)) {
+        return reply.code(404).send({ error: 'Product not found' });
+      }
+    }
+
+    // Resolve new location set if the field was sent.
+    let newLocationIds: string[] | null = null;
+    if (data.locationIds !== undefined) {
+      if (role === ROLES.ADMIN) {
+        newLocationIds = data.locationIds;
+      } else {
+        // store_manager: ignore the client's value, force their location.
+        newLocationIds = [request.user!.assignedLocationId!];
+      }
+
+      if (newLocationIds.length > 0) {
+        const validLocs = await db
+          .select({ id: locations.id })
+          .from(locations)
+          .where(and(eq(locations.tenantId, tenantId), inArray(locations.id, newLocationIds)));
+        if (validLocs.length !== newLocationIds.length) {
+          return reply.code(400).send({ error: 'One or more locations are invalid for this tenant' });
+        }
+      }
+    }
+
     let categoryId: string | undefined;
     if (data.category) {
-      const [cat] = await db.select({ id: categories.id }).from(categories)
+      const [cat] = await db
+        .select({ id: categories.id })
+        .from(categories)
         .where(and(eq(categories.tenantId, tenantId), ilike(categories.slug, data.category)))
         .limit(1);
       if (cat) categoryId = cat.id;
     }
 
-    // Sync imageUrl to images array
     const images = data.imageUrl ? [data.imageUrl] : undefined;
 
-    // Auto-generate slug from name if missing/blank — fixes products that
-    // were inserted without a slug and 404 on the customer storefront.
     let slug: string | undefined;
     if (data.slug !== undefined) {
       slug = data.slug.trim() || undefined;
@@ -132,10 +297,12 @@ export async function productRoutes(app: FastifyInstance) {
         .replace(/^-|-$/g, '');
     }
 
+    const { locationIds: _ignoreLocationIds, ...productUpdate } = data;
+
     const [product] = await db
       .update(products)
       .set({
-        ...data,
+        ...productUpdate,
         ...(categoryId ? { categoryId } : {}),
         ...(images ? { images } : {}),
         ...(slug ? { slug } : {}),
@@ -145,14 +312,41 @@ export async function productRoutes(app: FastifyInstance) {
       .returning();
 
     if (!product) return reply.code(404).send({ error: 'Product not found' });
-    return { product };
+
+    if (newLocationIds !== null) {
+      await setProductLocations(id, newLocationIds);
+    }
+
+    const finalLocationIds = await getProductLocationIds(id);
+    return { product: { ...product, locationIds: finalLocationIds } };
   });
 
   // Delete product
   app.delete('/:id', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };
+    const role = request.user!.role;
 
+    if (role === ROLES.STORE_STAFF) {
+      return reply.code(403).send({ error: 'Store staff cannot delete products' });
+    }
+
+    if (role !== ROLES.ADMIN) {
+      const myLoc = request.user!.assignedLocationId;
+      if (!myLoc) return reply.code(403).send({ error: 'Account is not assigned to a location' });
+      const currentLocs = await getProductLocationIds(id);
+      if (currentLocs.length === 0 || !currentLocs.includes(myLoc)) {
+        return reply.code(404).send({ error: 'Product not found' });
+      }
+      // Store managers cannot hard-delete a SKU outright — that affects the
+      // canonical product. Instead they should remove their location from
+      // the product's location list. Block the operation explicitly.
+      return reply.code(403).send({
+        error: 'Store managers cannot delete products. Untag the location instead.',
+      });
+    }
+
+    // FK ON DELETE CASCADE on product_locations cleans up the join rows.
     const [product] = await db
       .delete(products)
       .where(and(eq(products.id, id), eq(products.tenantId, tenantId)))
@@ -166,9 +360,27 @@ export async function productRoutes(app: FastifyInstance) {
   app.patch('/:id/toggle', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };
+    const role = request.user!.role;
 
-    const [existing] = await db.select().from(products).where(and(eq(products.id, id), eq(products.tenantId, tenantId))).limit(1);
+    if (role === ROLES.STORE_STAFF) {
+      return reply.code(403).send({ error: 'Store staff cannot toggle products' });
+    }
+
+    const [existing] = await db
+      .select()
+      .from(products)
+      .where(and(eq(products.id, id), eq(products.tenantId, tenantId)))
+      .limit(1);
     if (!existing) return reply.code(404).send({ error: 'Product not found' });
+
+    if (role !== ROLES.ADMIN) {
+      const myLoc = request.user!.assignedLocationId;
+      if (!myLoc) return reply.code(403).send({ error: 'Account is not assigned to a location' });
+      const currentLocs = await getProductLocationIds(id);
+      if (currentLocs.length === 0 || !currentLocs.includes(myLoc)) {
+        return reply.code(404).send({ error: 'Product not found' });
+      }
+    }
 
     const [product] = await db
       .update(products)
@@ -184,6 +396,20 @@ export async function productRoutes(app: FastifyInstance) {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };
     const { inStock } = request.body as { inStock: boolean };
+    const role = request.user!.role;
+
+    if (role === ROLES.STORE_STAFF) {
+      return reply.code(403).send({ error: 'Store staff cannot toggle stock' });
+    }
+
+    if (role !== ROLES.ADMIN) {
+      const myLoc = request.user!.assignedLocationId;
+      if (!myLoc) return reply.code(403).send({ error: 'Account is not assigned to a location' });
+      const currentLocs = await getProductLocationIds(id);
+      if (currentLocs.length === 0 || !currentLocs.includes(myLoc)) {
+        return reply.code(404).send({ error: 'Product not found' });
+      }
+    }
 
     const [product] = await db
       .update(products)

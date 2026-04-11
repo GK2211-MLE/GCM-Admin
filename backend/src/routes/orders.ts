@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { eq, ne, and, desc, asc, sql, gte, lte, ilike, or, count } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { orders, orderItems, customers, locations, products, appUsers } from '../db/schema.js';
-import { authGuard } from '../middleware/auth.js';
+import { authGuard, getLocationScope } from '../middleware/auth.js';
 import { getTenantId } from '../middleware/tenant.js';
 import {
   orderFilterSchema,
@@ -15,15 +15,25 @@ import { createNotification } from '../services/notification.js';
 
 export async function orderRoutes(app: FastifyInstance) {
   // List orders with filters
-  app.get('/', { preHandler: [authGuard] }, async (request) => {
+  app.get('/', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
     const filters = orderFilterSchema.parse(request.query);
     const offset = (filters.page - 1) * filters.limit;
 
+    // Per-role location scope: admin = null (all), others = their assigned store.
+    // A non-admin caller cannot widen the scope by passing a different locationId.
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
+
     let conditions = [eq(orders.tenantId, tenantId)];
 
     if (filters.status) conditions.push(eq(orders.status, filters.status));
-    if (filters.locationId) conditions.push(eq(orders.locationId, filters.locationId));
+    // Admin can filter to any location they like; non-admin is force-pinned to theirs.
+    if (scope) {
+      conditions.push(eq(orders.locationId, scope));
+    } else if (filters.locationId) {
+      conditions.push(eq(orders.locationId, filters.locationId));
+    }
     if (filters.paymentMethod) conditions.push(eq(orders.paymentMethod, filters.paymentMethod));
     if (filters.deliveryMethod) conditions.push(eq(orders.deliveryMethod, filters.deliveryMethod));
     if (filters.dateFrom) conditions.push(gte(orders.createdAt, new Date(filters.dateFrom)));
@@ -83,39 +93,65 @@ export async function orderRoutes(app: FastifyInstance) {
   });
 
   // Dashboard summary — full data for rich dashboard
-  app.get('/summary', { preHandler: [authGuard] }, async (request) => {
+  app.get('/summary', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
     const now = new Date();
     const today = new Date(now);
     today.setHours(0, 0, 0, 0);
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
 
+    // Helper: build a tenant + (optional) location condition.
+    const scoped = (extra?: ReturnType<typeof and>) =>
+      scope
+        ? extra
+          ? and(eq(orders.tenantId, tenantId), eq(orders.locationId, scope), extra)!
+          : and(eq(orders.tenantId, tenantId), eq(orders.locationId, scope))!
+        : extra
+          ? and(eq(orders.tenantId, tenantId), extra)!
+          : eq(orders.tenantId, tenantId);
+
     // Core counts
     const [totalOrders] = await db
       .select({ count: count() })
       .from(orders)
-      .where(eq(orders.tenantId, tenantId));
+      .where(scoped());
 
     const [todayOrders] = await db
       .select({ count: count() })
       .from(orders)
-      .where(and(eq(orders.tenantId, tenantId), gte(orders.createdAt, today)));
+      .where(scoped(gte(orders.createdAt, today)));
 
     const [revenue] = await db
       .select({ total: sql<number>`COALESCE(SUM(${orders.total}), 0)` })
       .from(orders)
-      .where(eq(orders.tenantId, tenantId));
+      .where(scoped());
 
     const [todayRevenue] = await db
       .select({ total: sql<number>`COALESCE(SUM(${orders.total}), 0)` })
       .from(orders)
-      .where(and(eq(orders.tenantId, tenantId), gte(orders.createdAt, today)));
+      .where(scoped(gte(orders.createdAt, today)));
 
-    const [customerCount] = await db
-      .select({ count: count() })
-      .from(customers)
-      .where(eq(customers.tenantId, tenantId));
+    // Customer count: for non-admin scope, count distinct customers with at
+    // least one order at this location. For admin, total tenant customers.
+    let totalCustomersNum: number;
+    if (scope) {
+      const [c] = await db
+        .select({
+          count: sql<number>`count(distinct coalesce(${orders.customerId}::text, ${orders.appUserId}::text))::int`,
+        })
+        .from(orders)
+        .where(scoped());
+      totalCustomersNum = Number(c?.count ?? 0);
+    } else {
+      const [customerCount] = await db
+        .select({ count: count() })
+        .from(customers)
+        .where(eq(customers.tenantId, tenantId));
+      totalCustomersNum = Number(customerCount.count);
+    }
 
     const [productCount] = await db
       .select({ count: count() })
@@ -126,30 +162,26 @@ export async function orderRoutes(app: FastifyInstance) {
     const statusCounts = await db
       .select({ status: orders.status, count: count() })
       .from(orders)
-      .where(eq(orders.tenantId, tenantId))
+      .where(scoped())
       .groupBy(orders.status);
 
     // Delivery method breakdown
     const deliveryMethodCounts = await db
       .select({ method: orders.deliveryMethod, count: count() })
       .from(orders)
-      .where(eq(orders.tenantId, tenantId))
+      .where(scoped())
       .groupBy(orders.deliveryMethod);
 
     // Week-over-week growth
     const [thisWeekRevenue] = await db
       .select({ total: sql<number>`COALESCE(SUM(${orders.total}), 0)`, count: count() })
       .from(orders)
-      .where(and(eq(orders.tenantId, tenantId), gte(orders.createdAt, sevenDaysAgo)));
+      .where(scoped(gte(orders.createdAt, sevenDaysAgo)));
 
     const [lastWeekRevenue] = await db
       .select({ total: sql<number>`COALESCE(SUM(${orders.total}), 0)`, count: count() })
       .from(orders)
-      .where(and(
-        eq(orders.tenantId, tenantId),
-        gte(orders.createdAt, fourteenDaysAgo),
-        lte(orders.createdAt, sevenDaysAgo),
-      ));
+      .where(scoped(and(gte(orders.createdAt, fourteenDaysAgo), lte(orders.createdAt, sevenDaysAgo))));
 
     // Daily revenue for chart (last 30 days)
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -160,11 +192,15 @@ export async function orderRoutes(app: FastifyInstance) {
         count: count(),
       })
       .from(orders)
-      .where(and(eq(orders.tenantId, tenantId), gte(orders.createdAt, thirtyDaysAgo)))
+      .where(scoped(gte(orders.createdAt, thirtyDaysAgo)))
       .groupBy(sql`TO_CHAR(${orders.createdAt}, 'YYYY-MM-DD')`)
       .orderBy(sql`TO_CHAR(${orders.createdAt}, 'YYYY-MM-DD')`);
 
-    // Top products by order frequency
+    // Top products by order frequency. We need a join here so the location
+    // filter on `orders` can apply.
+    const topProductsWhere = scope
+      ? and(eq(orders.tenantId, tenantId), eq(orders.locationId, scope))!
+      : eq(orders.tenantId, tenantId);
     const topProducts = await db
       .select({
         productName: orderItems.productName,
@@ -174,7 +210,7 @@ export async function orderRoutes(app: FastifyInstance) {
       })
       .from(orderItems)
       .innerJoin(orders, eq(orderItems.orderId, orders.id))
-      .where(eq(orders.tenantId, tenantId))
+      .where(topProductsWhere)
       .groupBy(orderItems.productId, orderItems.productName)
       .orderBy(desc(count()))
       .limit(5);
@@ -196,7 +232,7 @@ export async function orderRoutes(app: FastifyInstance) {
       .from(orders)
       .leftJoin(customers, eq(orders.customerId, customers.id))
       .leftJoin(appUsers, eq(orders.appUserId, appUsers.id))
-      .where(eq(orders.tenantId, tenantId))
+      .where(scoped())
       .orderBy(desc(orders.createdAt))
       .limit(10);
 
@@ -228,7 +264,7 @@ export async function orderRoutes(app: FastifyInstance) {
       todayOrders: Number(todayOrders.count),
       totalRevenue: Number(revenue.total),
       todayRevenue: Number(todayRevenue.total),
-      totalCustomers: Number(customerCount.count),
+      totalCustomers: totalCustomersNum,
       totalProducts: Number(productCount.count),
       pendingCount: Number(pendingCount),
       activeDeliveries: Number(activeDeliveries),
@@ -252,17 +288,22 @@ export async function orderRoutes(app: FastifyInstance) {
   // Get single order
   app.get('/:id', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
     const { id } = request.params as { id: string };
 
     // Support lookup by UUID id or order code
     const isUuid = id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    const orderConditions = [
+      isUuid ? eq(orders.id, id) : eq(orders.orderCode, id),
+      eq(orders.tenantId, tenantId),
+    ];
+    if (scope) orderConditions.push(eq(orders.locationId, scope));
+
     const [order] = await db
       .select()
       .from(orders)
-      .where(and(
-        isUuid ? eq(orders.id, id) : eq(orders.orderCode, id),
-        eq(orders.tenantId, tenantId),
-      ))
+      .where(and(...orderConditions))
       .limit(1);
 
     if (!order) return reply.code(404).send({ error: 'Order not found' });
@@ -285,16 +326,20 @@ export async function orderRoutes(app: FastifyInstance) {
   // Update order status
   app.patch('/:id/status', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
     const { id } = request.params as { id: string };
     const body = request.body as { status: string; notes?: string; force?: boolean };
     const { status, notes } = updateOrderStatusSchema.parse(request.body);
     const force = body.force === true;
 
     // Look up the existing order to check current payment state
+    const existingConditions = [eq(orders.id, id), eq(orders.tenantId, tenantId)];
+    if (scope) existingConditions.push(eq(orders.locationId, scope));
     const [existing] = await db
       .select()
       .from(orders)
-      .where(and(eq(orders.id, id), eq(orders.tenantId, tenantId)))
+      .where(and(...existingConditions))
       .limit(1);
 
     if (!existing) return reply.code(404).send({ error: 'Order not found' });
@@ -354,22 +399,27 @@ export async function orderRoutes(app: FastifyInstance) {
       `Order ${order.orderCode} updated`,
       `Status changed to ${status.replace(/_/g, ' ')}`,
       `/orders/${order.id}`,
+      order.locationId,
     ).catch(console.error);
 
     return { order };
   });
 
   // Bulk status update
-  app.patch('/bulk/status', { preHandler: [authGuard] }, async (request) => {
+  app.patch('/bulk/status', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
     const { orderIds, status } = bulkStatusUpdateSchema.parse(request.body);
 
     const updated = [];
     for (const orderId of orderIds) {
+      const conds = [eq(orders.id, orderId), eq(orders.tenantId, tenantId)];
+      if (scope) conds.push(eq(orders.locationId, scope));
       const [order] = await db
         .update(orders)
         .set({ status, updatedAt: new Date() })
-        .where(and(eq(orders.id, orderId), eq(orders.tenantId, tenantId)))
+        .where(and(...conds))
         .returning();
       if (order) updated.push(order);
     }

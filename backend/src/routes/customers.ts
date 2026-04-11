@@ -3,14 +3,21 @@ import { eq, and, desc, ilike, or, count, sql } from 'drizzle-orm';
 import bcrypt from 'bcrypt';
 import { db } from '../db/client.js';
 import { customers, orders, appUsers } from '../db/schema.js';
-import { authGuard } from '../middleware/auth.js';
+import { authGuard, getLocationScope } from '../middleware/auth.js';
 import { getTenantId } from '../middleware/tenant.js';
 import { paginationSchema, createCustomerSchema } from '../shared/index.js';
 
 export async function customerRoutes(app: FastifyInstance) {
   // List customers (merged from both customers and app_users tables)
-  app.get('/', { preHandler: [authGuard] }, async (request) => {
+  //
+  // Per-location scoping: when a non-admin user calls this, only customers
+  // who have at least one order at that user's assigned location are
+  // returned. The orders table is the only source of truth for which store
+  // a customer "belongs to" — there is no per-location customers list.
+  app.get('/', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
     const query = request.query as { page?: string; limit?: string; search?: string };
     const { page, limit } = paginationSchema.parse(query);
     const offset = (page - 1) * limit;
@@ -20,6 +27,22 @@ export async function customerRoutes(app: FastifyInstance) {
       ? `AND (name ILIKE '%${query.search.replace(/'/g, "''")}%' OR phone ILIKE '%${query.search.replace(/'/g, "''")}%' OR email ILIKE '%${query.search.replace(/'/g, "''")}%')`
       : '';
 
+    // EXISTS subqueries that gate inclusion to the caller's assigned store.
+    // Empty when admin = no extra filter. The subqueries reference fully-
+    // qualified column names so they're unambiguous inside the UNION ALL.
+    const scopeBotJoin = scope
+      ? sql`AND EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = customers.id AND o.location_id = ${scope})`
+      : sql``;
+    const scopeAppJoin = scope
+      ? sql`AND EXISTS (SELECT 1 FROM orders o WHERE o.app_user_id = au.id AND o.location_id = ${scope})`
+      : sql``;
+    const scopeBotJoin2 = scope
+      ? sql`AND EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = customers.id AND o.location_id = ${scope})`
+      : sql``;
+    const scopeAppJoin2 = scope
+      ? sql`AND EXISTS (SELECT 1 FROM orders o WHERE o.app_user_id = app_users.id AND o.location_id = ${scope})`
+      : sql``;
+
     // Union both customer sources into a single list (camelCase aliases for frontend)
     const result = await db.execute(sql`
       SELECT * FROM (
@@ -28,7 +51,7 @@ export async function customerRoutes(app: FastifyInstance) {
           total_orders as "totalOrders", total_spent as "totalSpent", last_order_at as "lastOrderAt",
           created_at as "createdAt", updated_at as "updatedAt"
         FROM customers
-        WHERE tenant_id = ${tenantId}
+        WHERE tenant_id = ${tenantId} ${scopeBotJoin}
         UNION ALL
         SELECT
           au.id, au.tenant_id as "tenantId", au.name, au.phone, au.email, 'app' as source,
@@ -41,7 +64,7 @@ export async function customerRoutes(app: FastifyInstance) {
           SELECT app_user_id, count(*)::int as cnt, sum(total)::int as spent, max(created_at) as last_at
           FROM orders WHERE app_user_id IS NOT NULL GROUP BY app_user_id
         ) os ON os.app_user_id = au.id
-        WHERE au.tenant_id = ${tenantId} AND au.role = 'customer'
+        WHERE au.tenant_id = ${tenantId} AND au.role = 'customer' ${scopeAppJoin}
       ) combined
       WHERE 1=1 ${sql.raw(searchFilter)}
       ORDER BY "createdAt" DESC
@@ -50,9 +73,9 @@ export async function customerRoutes(app: FastifyInstance) {
 
     const countResult = await db.execute(sql`
       SELECT count(*)::int as total FROM (
-        SELECT id, name, phone, email, created_at FROM customers WHERE tenant_id = ${tenantId}
+        SELECT id, name, phone, email, created_at FROM customers WHERE tenant_id = ${tenantId} ${scopeBotJoin2}
         UNION ALL
-        SELECT id, name, phone, email, created_at FROM app_users WHERE tenant_id = ${tenantId} AND role = 'customer'
+        SELECT id, name, phone, email, created_at FROM app_users WHERE tenant_id = ${tenantId} AND role = 'customer' ${scopeAppJoin2}
       ) combined
       WHERE 1=1 ${sql.raw(searchFilter)}
     `);
@@ -68,6 +91,8 @@ export async function customerRoutes(app: FastifyInstance) {
   // Get single customer with order history
   app.get('/:id', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
     const { id } = request.params as { id: string };
 
     // Check customers table first, then app_users
@@ -81,11 +106,23 @@ export async function customerRoutes(app: FastifyInstance) {
       .limit(1);
 
     if (botCustomer) {
+      // Verify the caller's scope can see this customer at all.
+      if (scope) {
+        const [hit] = await db
+          .select({ id: orders.id })
+          .from(orders)
+          .where(and(eq(orders.customerId, id), eq(orders.locationId, scope)))
+          .limit(1);
+        if (!hit) return reply.code(404).send({ error: 'Customer not found' });
+      }
       customer = botCustomer;
+      const orderConds = scope
+        ? and(eq(orders.customerId, id), eq(orders.locationId, scope))!
+        : eq(orders.customerId, id);
       customerOrders = await db
         .select()
         .from(orders)
-        .where(eq(orders.customerId, id))
+        .where(orderConds)
         .orderBy(desc(orders.createdAt))
         .limit(50);
     } else {
@@ -97,10 +134,23 @@ export async function customerRoutes(app: FastifyInstance) {
 
       if (!appUser) return reply.code(404).send({ error: 'Customer not found' });
 
+      // Same gate for app_user customers.
+      if (scope) {
+        const [hit] = await db
+          .select({ id: orders.id })
+          .from(orders)
+          .where(and(eq(orders.appUserId, id), eq(orders.locationId, scope)))
+          .limit(1);
+        if (!hit) return reply.code(404).send({ error: 'Customer not found' });
+      }
+
+      const orderConds = scope
+        ? and(eq(orders.appUserId, id), eq(orders.locationId, scope))!
+        : eq(orders.appUserId, id);
       customerOrders = await db
         .select()
         .from(orders)
-        .where(eq(orders.appUserId, id))
+        .where(orderConds)
         .orderBy(desc(orders.createdAt))
         .limit(50);
 

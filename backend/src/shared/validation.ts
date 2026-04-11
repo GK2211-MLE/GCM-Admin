@@ -94,6 +94,10 @@ export const createProductSchema = z.object({
   weightKg: z.number().positive().default(1),
   imageUrl: z.string().default(''),
   locationId: z.string().uuid().nullable().default(null),
+  // Empty/undefined array means "available at all locations". Otherwise the
+  // product is only available at the listed locations. Source of truth is
+  // the product_locations join table — this field just shapes the request.
+  locationIds: z.array(z.string().uuid()).optional(),
   active: z.boolean().default(true),
   inStock: z.boolean().default(true),
   stockQuantity: z.number().int().min(0).default(0),

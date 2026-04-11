@@ -9,6 +9,7 @@ import {
 import { apiClient } from '@/lib/api-client';
 import { queryKeys } from '@/lib/query-keys';
 import { formatCurrency } from '@/lib/utils';
+import { useAuthStore } from '@/features/auth/store';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -57,7 +58,17 @@ interface Product {
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
+  // Locations the product is tagged for. Empty array = "all locations"
+  // (catalog-wide). Backend is the source of truth via product_locations.
+  locationIds?: string[];
 }
+
+interface LocationOption {
+  id: string;
+  name: string;
+}
+
+type LocationMode = 'all' | 'specific';
 
 const EMPTY_HALAL_INFO: HalalInfo = {
   certifyingBody: '',
@@ -85,6 +96,9 @@ interface FormState {
   sortOrder: string;
   isHalal: boolean;
   halalInfo: HalalInfo;
+  // Per-location availability. 'all' = catalog-wide; 'specific' = list.
+  locationMode: LocationMode;
+  locationIds: string[];
 }
 
 const EMPTY_FORM: FormState = {
@@ -99,6 +113,8 @@ const EMPTY_FORM: FormState = {
   sortOrder: '0',
   isHalal: false,
   halalInfo: { ...EMPTY_HALAL_INFO },
+  locationMode: 'all',
+  locationIds: [],
 };
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -109,7 +125,19 @@ export function ProductDetailPage() {
   const queryClient = useQueryClient();
   const isNew = id === 'new';
 
-  const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  // Auth context — used to lock the location selector for non-admin roles.
+  const authUser = useAuthStore((s) => s.user);
+  const isAdmin = authUser?.role === 'admin' || authUser?.role === 'owner';
+  const myLocationId = authUser?.assignedLocationId ?? null;
+
+  const [form, setForm] = useState<FormState>(() => {
+    // For non-admins creating a new product, force the location set to
+    // their assigned store from the start. They can't change it.
+    if (!isAdmin && myLocationId) {
+      return { ...EMPTY_FORM, locationMode: 'specific', locationIds: [myLocationId] };
+    }
+    return EMPTY_FORM;
+  });
   const [isDirty, setIsDirty] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
@@ -133,10 +161,20 @@ export function ProductDetailPage() {
     },
   });
 
+  // Fetch all locations for the location selector.
+  const { data: allLocations = [] } = useQuery({
+    queryKey: queryKeys.settings.locations(),
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ locations: LocationOption[] }>('/locations/all');
+      return data.locations;
+    },
+  });
+
   // Sync product data into form
   useEffect(() => {
     if (product && !isNew) {
       const hi = product.halalInfo as Record<string, unknown> | undefined;
+      const productLocationIds = product.locationIds ?? [];
       setForm({
         name: product.name,
         description: product.description ?? '',
@@ -148,6 +186,8 @@ export function ProductDetailPage() {
         inStock: product.inStock ?? true,
         sortOrder: String(product.sortOrder ?? 0),
         isHalal: product.isHalal ?? false,
+        locationMode: productLocationIds.length === 0 ? 'all' : 'specific',
+        locationIds: productLocationIds,
         halalInfo: {
           certifyingBody: (hi?.certifyingBody as string) ?? '',
           certificateNumber: (hi?.certificateNumber as string) ?? '',
@@ -222,6 +262,16 @@ export function ProductDetailPage() {
 
   const buildPayload = useCallback(() => {
     const dollars = parseFloat(form.priceDollars);
+    // Resolve location set:
+    //   - admin in 'all' mode → empty array (= catalog-wide)
+    //   - admin in 'specific' → whatever they picked
+    //   - non-admin → forced to their assigned location, regardless of UI
+    let locationIds: string[];
+    if (isAdmin) {
+      locationIds = form.locationMode === 'all' ? [] : form.locationIds;
+    } else {
+      locationIds = myLocationId ? [myLocationId] : [];
+    }
     return {
       name: form.name.trim(),
       description: form.description.trim(),
@@ -233,6 +283,7 @@ export function ProductDetailPage() {
       inStock: form.inStock,
       sortOrder: parseInt(form.sortOrder, 10) || 0,
       isHalal: form.isHalal,
+      locationIds,
       halalInfo: form.isHalal
         ? {
             ...form.halalInfo,
@@ -247,7 +298,7 @@ export function ProductDetailPage() {
           }
         : {},
     };
-  }, [form]);
+  }, [form, isAdmin, myLocationId]);
 
   const onSave = useCallback(() => {
     const payload = buildPayload();
@@ -503,6 +554,105 @@ export function ProductDetailPage() {
                     checked={form.inStock}
                     onCheckedChange={(checked) => updateField('inStock', checked)}
                   />
+                </div>
+
+                {/* ── Available at locations ──────────────────────────── */}
+                <div className="rounded-lg border border-[var(--border-default)] p-4 md:col-span-2">
+                  <div className="mb-3 flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-[var(--text-primary)]">
+                        Available at locations
+                      </p>
+                      <p className="text-xs text-[var(--text-tertiary)]">
+                        Choose where this product can be ordered. "All locations" makes it
+                        catalog-wide.
+                      </p>
+                    </div>
+                  </div>
+
+                  {!isAdmin && (
+                    <p className="mb-3 rounded-md bg-[var(--surface-tertiary)]/40 px-3 py-2 text-xs text-[var(--text-tertiary)]">
+                      As a store {authUser?.role === 'store_manager' ? 'manager' : 'staff'}, this
+                      product is locked to your assigned store
+                      {authUser?.assignedLocationName ? ` (${authUser.assignedLocationName})` : ''}
+                      . Only an admin can list it at multiple stores.
+                    </p>
+                  )}
+
+                  {/* Mode toggle */}
+                  <div className="mb-4 flex gap-2">
+                    <button
+                      type="button"
+                      disabled={!isAdmin}
+                      onClick={() => updateField('locationMode', 'all')}
+                      className={`flex-1 rounded-md border px-3 py-2 text-sm transition-colors ${
+                        form.locationMode === 'all'
+                          ? 'border-primary-500 bg-primary-500/10 text-primary-500'
+                          : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--surface-tertiary)]'
+                      } ${!isAdmin ? 'cursor-not-allowed opacity-50' : ''}`}
+                    >
+                      All locations
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!isAdmin}
+                      onClick={() => {
+                        // When switching to specific, default to whatever's
+                        // already in form.locationIds; if empty, leave empty
+                        // and let the user pick.
+                        updateField('locationMode', 'specific');
+                      }}
+                      className={`flex-1 rounded-md border px-3 py-2 text-sm transition-colors ${
+                        form.locationMode === 'specific'
+                          ? 'border-primary-500 bg-primary-500/10 text-primary-500'
+                          : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--surface-tertiary)]'
+                      } ${!isAdmin ? 'cursor-not-allowed opacity-50' : ''}`}
+                    >
+                      Specific locations
+                    </button>
+                  </div>
+
+                  {/* Location checkboxes — only when 'specific' */}
+                  {form.locationMode === 'specific' && (
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {allLocations.map((loc) => {
+                        const checked = form.locationIds.includes(loc.id);
+                        const lockedToOther =
+                          !isAdmin && myLocationId !== null && loc.id !== myLocationId;
+                        return (
+                          <label
+                            key={loc.id}
+                            className={`flex cursor-pointer items-center gap-2 rounded-md border border-[var(--border-default)] px-3 py-2 text-sm transition-colors ${
+                              checked
+                                ? 'border-primary-500/50 bg-primary-500/5'
+                                : 'hover:bg-[var(--surface-tertiary)]/40'
+                            } ${lockedToOther ? 'cursor-not-allowed opacity-40' : ''}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={lockedToOther}
+                              onChange={(e) => {
+                                if (lockedToOther) return;
+                                const next = e.target.checked
+                                  ? [...form.locationIds, loc.id]
+                                  : form.locationIds.filter((x) => x !== loc.id);
+                                updateField('locationIds', next);
+                              }}
+                              className="h-4 w-4 accent-primary-500"
+                            />
+                            <span className="truncate text-[var(--text-primary)]">{loc.name}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {form.locationMode === 'specific' && form.locationIds.length === 0 && (
+                    <p className="mt-2 text-xs text-danger">
+                      Pick at least one location, or switch to "All locations".
+                    </p>
+                  )}
                 </div>
               </div>
             </CardContent>

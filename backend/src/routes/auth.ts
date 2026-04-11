@@ -3,9 +3,9 @@ import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { adminUsers } from '../db/schema.js';
+import { adminUsers, locations } from '../db/schema.js';
 import { config } from '../config.js';
-import { loginSchema } from '../shared/index.js';
+import { loginSchema, normalizeLegacyRole } from '../shared/index.js';
 import { authGuard } from '../middleware/auth.js';
 
 export async function authRoutes(app: FastifyInstance) {
@@ -28,11 +28,26 @@ export async function authRoutes(app: FastifyInstance) {
       return reply.code(401).send({ error: 'Invalid credentials' });
     }
 
+    const role = normalizeLegacyRole(user.role);
+
+    // Resolve assigned location name (for the frontend to display in the
+    // header). Cheap single query — keep it inline rather than join.
+    let assignedLocationName: string | null = null;
+    if (user.assignedLocationId) {
+      const [loc] = await db
+        .select({ name: locations.name })
+        .from(locations)
+        .where(eq(locations.id, user.assignedLocationId))
+        .limit(1);
+      assignedLocationName = loc?.name ?? null;
+    }
+
     const payload = {
       id: user.id,
       tenantId: user.tenantId,
       email: user.email,
-      role: user.role,
+      role,
+      assignedLocationId: user.assignedLocationId ?? null,
     };
 
     const accessToken = jwt.sign(payload, config.JWT_SECRET, { expiresIn: '24h' });
@@ -45,8 +60,11 @@ export async function authRoutes(app: FastifyInstance) {
         id: user.id,
         email: user.email,
         name: user.name,
-        role: user.role,
+        phone: user.phone ?? null,
+        role,
         tenantId: user.tenantId,
+        assignedLocationId: user.assignedLocationId ?? null,
+        assignedLocationName,
       },
     };
   });
@@ -64,13 +82,15 @@ export async function authRoutes(app: FastifyInstance) {
         tenantId: string;
         email: string;
         role: string;
+        assignedLocationId?: string | null;
       };
 
       const newPayload = {
         id: payload.id,
         tenantId: payload.tenantId,
         email: payload.email,
-        role: payload.role,
+        role: normalizeLegacyRole(payload.role),
+        assignedLocationId: payload.assignedLocationId ?? null,
       };
 
       const accessToken = jwt.sign(newPayload, config.JWT_SECRET, { expiresIn: '24h' });
@@ -89,13 +109,33 @@ export async function authRoutes(app: FastifyInstance) {
         id: adminUsers.id,
         email: adminUsers.email,
         name: adminUsers.name,
+        phone: adminUsers.phone,
         role: adminUsers.role,
         tenantId: adminUsers.tenantId,
+        assignedLocationId: adminUsers.assignedLocationId,
       })
       .from(adminUsers)
       .where(eq(adminUsers.id, request.user!.id))
       .limit(1);
 
-    return { user };
+    if (!user) return { user: null };
+
+    let assignedLocationName: string | null = null;
+    if (user.assignedLocationId) {
+      const [loc] = await db
+        .select({ name: locations.name })
+        .from(locations)
+        .where(eq(locations.id, user.assignedLocationId))
+        .limit(1);
+      assignedLocationName = loc?.name ?? null;
+    }
+
+    return {
+      user: {
+        ...user,
+        role: normalizeLegacyRole(user.role),
+        assignedLocationName,
+      },
+    };
   });
 }

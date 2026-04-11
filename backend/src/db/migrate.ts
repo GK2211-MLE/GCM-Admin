@@ -390,6 +390,76 @@ DO $$ BEGIN
   ALTER TABLE tenants ADD COLUMN config JSONB NOT NULL DEFAULT '{}';
 EXCEPTION WHEN duplicate_column THEN NULL;
 END $$;
+
+-- ════════════════════════════════════════════════════════════════
+-- Users & Permissions overhaul (Apr 2026)
+-- Adds: phone + assigned_location_id on admin_users,
+--       role_permissions matrix table,
+--       product_locations many-to-many,
+--       location_id on notifications.
+-- ════════════════════════════════════════════════════════════════
+
+-- admin_users: add phone + assigned_location_id
+DO $$ BEGIN
+  ALTER TABLE admin_users ADD COLUMN phone VARCHAR(32);
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+DO $$ BEGIN
+  ALTER TABLE admin_users ADD COLUMN assigned_location_id UUID REFERENCES locations(id) ON DELETE SET NULL;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+-- Translate legacy role names to the new ones (idempotent — only updates rows
+-- that still have the old values).
+UPDATE admin_users SET role = 'admin'         WHERE role = 'owner';
+UPDATE admin_users SET role = 'store_manager' WHERE role = 'manager';
+UPDATE admin_users SET role = 'store_staff'   WHERE role = 'staff';
+
+-- Drop the old default and set the new one (store_staff is the safest default
+-- for any future inserts that don't specify a role).
+ALTER TABLE admin_users ALTER COLUMN role SET DEFAULT 'store_staff';
+
+-- role_permissions matrix
+CREATE TABLE IF NOT EXISTS role_permissions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id),
+  role VARCHAR(20) NOT NULL,
+  page_key VARCHAR(50) NOT NULL,
+  allowed BOOLEAN NOT NULL DEFAULT false,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS role_permissions_unique_idx
+  ON role_permissions(tenant_id, role, page_key);
+
+-- product_locations many-to-many. Empty for a product = available everywhere.
+CREATE TABLE IF NOT EXISTS product_locations (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS product_locations_unique_idx
+  ON product_locations(product_id, location_id);
+CREATE INDEX IF NOT EXISTS product_locations_location_idx
+  ON product_locations(location_id);
+
+-- Backfill: if a product has the legacy products.location_id set, copy it
+-- into product_locations exactly once. The legacy column stays in place
+-- for now but is no longer the source of truth.
+INSERT INTO product_locations (product_id, location_id)
+SELECT p.id, p.location_id
+FROM products p
+WHERE p.location_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM product_locations pl
+    WHERE pl.product_id = p.id AND pl.location_id = p.location_id
+  );
+
+-- notifications: add location_id (nullable; null = global notification)
+DO $$ BEGIN
+  ALTER TABLE notifications ADD COLUMN location_id UUID REFERENCES locations(id);
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
 `;
 
 async function migrate() {

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { eq, and, asc, desc, ilike, or, sql, lte, gt } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { products, storeInventory } from '../db/schema.js';
-import { authGuard } from '../middleware/auth.js';
+import { authGuard, getLocationScope } from '../middleware/auth.js';
 import { getTenantId } from '../middleware/tenant.js';
 import {
   inventoryFilterSchema,
@@ -12,10 +12,17 @@ import {
 
 export async function inventoryRoutes(app: FastifyInstance) {
   // ── GET / — Inventory list with filtering, sorting, pagination, and optional store ──
-  app.get('/', { preHandler: [authGuard] }, async (request) => {
+  //
+  // Per-location scoping: a non-admin caller is force-pinned to their assigned
+  // location and can never enter the "global inventory" branch (which would
+  // expose tenant-wide stock numbers across stores).
+  app.get('/', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
     const filters = inventoryFilterSchema.parse(request.query);
-    const { locationId } = request.query as { locationId?: string };
+    const queryLocationId = (request.query as { locationId?: string }).locationId;
+    const locationId = scope ?? queryLocationId;
 
     // ── Per-store inventory mode ──
     if (locationId) {
@@ -144,8 +151,29 @@ export async function inventoryRoutes(app: FastifyInstance) {
   });
 
   // ── GET /summary ──
-  app.get('/summary', { preHandler: [authGuard] }, async (request) => {
+  app.get('/summary', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
+
+    // For non-admin: aggregate over store_inventory rows for this store only.
+    if (scope) {
+      const [stats] = await db
+        .select({
+          totalProducts: sql<number>`count(*)::int`,
+          activeProducts: sql<number>`count(*) filter (where ${products.active} = true)::int`,
+          inStock: sql<number>`count(*) filter (where ${storeInventory.stockQuantity} > ${storeInventory.lowStockThreshold})::int`,
+          lowStock: sql<number>`count(*) filter (where ${storeInventory.stockQuantity} > 0 and ${storeInventory.stockQuantity} <= ${storeInventory.lowStockThreshold})::int`,
+          outOfStock: sql<number>`count(*) filter (where ${storeInventory.stockQuantity} = 0)::int`,
+          totalCategories: sql<number>`count(distinct ${products.category})::int`,
+          totalValue: sql<number>`coalesce(sum(${storeInventory.stockQuantity} * ${products.pricePerUnit}), 0)::int`,
+        })
+        .from(storeInventory)
+        .innerJoin(products, eq(storeInventory.productId, products.id))
+        .where(and(eq(products.tenantId, tenantId), eq(storeInventory.locationId, scope)));
+      return stats;
+    }
+
     const [stats] = await db
       .select({
         totalProducts: sql<number>`count(*)::int`,
@@ -164,10 +192,20 @@ export async function inventoryRoutes(app: FastifyInstance) {
   // ── PATCH /:productId/stock — Update stock (supports per-store) ──
   app.patch('/:productId/stock', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
     const { productId } = request.params as { productId: string };
     const body = request.body as { stockQuantity?: number; adjustment?: number; locationId?: string };
     const data = updateStockSchema.parse(body);
-    const { locationId } = body;
+    // Force the location for non-admin callers; reject any attempt to write
+    // to a different store.
+    let { locationId } = body;
+    if (scope) {
+      if (locationId && locationId !== scope) {
+        return reply.code(403).send({ error: 'Cannot update stock for a different location' });
+      }
+      locationId = scope;
+    }
 
     const [existing] = await db.select().from(products)
       .where(and(eq(products.id, productId), eq(products.tenantId, tenantId))).limit(1);
@@ -217,10 +255,18 @@ export async function inventoryRoutes(app: FastifyInstance) {
   // ── PATCH /:productId/threshold — Update low stock threshold (supports per-store) ──
   app.patch('/:productId/threshold', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
     const { productId } = request.params as { productId: string };
     const body = request.body as { lowStockThreshold: number; locationId?: string };
     const data = updateThresholdSchema.parse(body);
-    const { locationId } = body;
+    let { locationId } = body;
+    if (scope) {
+      if (locationId && locationId !== scope) {
+        return reply.code(403).send({ error: 'Cannot update threshold for a different location' });
+      }
+      locationId = scope;
+    }
 
     if (locationId) {
       await db.update(storeInventory).set({ lowStockThreshold: data.lowStockThreshold, updatedAt: new Date() })

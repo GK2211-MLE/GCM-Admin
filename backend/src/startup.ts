@@ -427,6 +427,59 @@ DO $$ BEGIN ALTER TABLE promotions ADD COLUMN popup_title VARCHAR(255) NOT NULL 
 DO $$ BEGIN ALTER TABLE promotions ADD COLUMN popup_body TEXT NOT NULL DEFAULT ''; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 DO $$ BEGIN ALTER TABLE promotions ADD COLUMN target_web BOOLEAN NOT NULL DEFAULT true; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 DO $$ BEGIN ALTER TABLE promotions ADD COLUMN target_app BOOLEAN NOT NULL DEFAULT true; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+
+-- ============================================================
+-- Users & Permissions overhaul (Apr 2026)
+-- - admin_users gains phone + assigned_location_id
+-- - role_permissions matrix table (per-tenant)
+-- - product_locations many-to-many for per-store catalogs
+-- - notifications gains location_id for per-store filtering
+-- All idempotent.
+-- ============================================================
+
+DO $$ BEGIN ALTER TABLE admin_users ADD COLUMN phone VARCHAR(32); EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE admin_users ADD COLUMN assigned_location_id UUID REFERENCES locations(id) ON DELETE SET NULL; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+
+-- Translate legacy role names to the new ones (idempotent — only updates rows
+-- that still have the old values).
+UPDATE admin_users SET role = 'admin'         WHERE role = 'owner';
+UPDATE admin_users SET role = 'store_manager' WHERE role = 'manager';
+UPDATE admin_users SET role = 'store_staff'   WHERE role = 'staff';
+ALTER TABLE admin_users ALTER COLUMN role SET DEFAULT 'store_staff';
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL REFERENCES tenants(id),
+  role VARCHAR(20) NOT NULL,
+  page_key VARCHAR(50) NOT NULL,
+  allowed BOOLEAN NOT NULL DEFAULT false,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS role_permissions_unique_idx
+  ON role_permissions(tenant_id, role, page_key);
+
+CREATE TABLE IF NOT EXISTS product_locations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS product_locations_unique_idx
+  ON product_locations(product_id, location_id);
+CREATE INDEX IF NOT EXISTS product_locations_location_idx
+  ON product_locations(location_id);
+
+-- Backfill product_locations from the legacy products.location_id column.
+INSERT INTO product_locations (product_id, location_id)
+SELECT p.id, p.location_id
+FROM products p
+WHERE p.location_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM product_locations pl
+    WHERE pl.product_id = p.id AND pl.location_id = p.location_id
+  );
+
+DO $$ BEGIN ALTER TABLE notifications ADD COLUMN location_id UUID REFERENCES locations(id); EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 `;
 
 export async function runStartup(): Promise<string> {
@@ -458,7 +511,7 @@ export async function runStartup(): Promise<string> {
   const passwordHash = await bcrypt.hash('admin123!', 12);
   await sql`
     INSERT INTO admin_users (tenant_id, email, password_hash, name, role)
-    VALUES (${tenantId}, 'admin@farm2cook.com', ${passwordHash}, 'Admin', 'owner')
+    VALUES (${tenantId}, 'admin@farm2cook.com', ${passwordHash}, 'Admin', 'admin')
     ON CONFLICT (email) DO UPDATE SET password_hash = ${passwordHash}
   `;
   console.log('[startup] Admin user: admin@farm2cook.com / admin123!');

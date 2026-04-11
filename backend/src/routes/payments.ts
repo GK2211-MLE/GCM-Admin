@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { eq, and, desc, ilike, or, gte, lte, sql, sum, count } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { orders, orderItems, customers, appUsers } from '../db/schema.js';
-import { authGuard } from '../middleware/auth.js';
+import { authGuard, getLocationScope } from '../middleware/auth.js';
 import { getTenantId } from '../middleware/tenant.js';
 import { createPaymentIntent, createRefund } from '../services/stripe.js';
 import { broadcastSSE } from './sse.js';
@@ -14,11 +14,14 @@ export async function paymentRoutes(app: FastifyInstance) {
   // ── List payment transactions (paginated) ──────────────────
   app.get('/', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
     const filters = paymentFilterSchema.parse(request.query);
     const { page, limit, paymentMethod, paymentStatus, dateFrom, dateTo, search } = filters;
     const offset = (page - 1) * limit;
 
     const conditions = [eq(orders.tenantId, tenantId)];
+    if (scope) conditions.push(eq(orders.locationId, scope));
 
     if (paymentMethod) {
       conditions.push(eq(orders.paymentMethod, paymentMethod));
@@ -89,6 +92,12 @@ export async function paymentRoutes(app: FastifyInstance) {
   // ── Payment summary stats ──────────────────────────────────
   app.get('/summary', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
+
+    const summaryWhere = scope
+      ? and(eq(orders.tenantId, tenantId), eq(orders.locationId, scope))!
+      : eq(orders.tenantId, tenantId);
 
     const [result] = await db
       .select({
@@ -106,7 +115,7 @@ export async function paymentRoutes(app: FastifyInstance) {
         ),
       })
       .from(orders)
-      .where(eq(orders.tenantId, tenantId));
+      .where(summaryWhere);
 
     return {
       totalCollected: Number(result?.totalCollected ?? 0),
@@ -119,12 +128,16 @@ export async function paymentRoutes(app: FastifyInstance) {
   // ── Create payment intent for an order ─────────────────────
   app.post('/create-intent', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
     const { orderId } = request.body as { orderId: string };
 
+    const conds = [eq(orders.id, orderId), eq(orders.tenantId, tenantId)];
+    if (scope) conds.push(eq(orders.locationId, scope));
     const [order] = await db
       .select()
       .from(orders)
-      .where(and(eq(orders.id, orderId), eq(orders.tenantId, tenantId)))
+      .where(and(...conds))
       .limit(1);
 
     if (!order) return reply.code(404).send({ error: 'Order not found' });
@@ -146,12 +159,16 @@ export async function paymentRoutes(app: FastifyInstance) {
   // ── Mark order as paid (for COD/store payments) ────────────
   app.post('/mark-paid', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
     const { orderId } = request.body as { orderId: string };
 
+    const conds = [eq(orders.id, orderId), eq(orders.tenantId, tenantId)];
+    if (scope) conds.push(eq(orders.locationId, scope));
     const [order] = await db
       .update(orders)
       .set({ paymentStatus: 'paid', status: 'confirmed', updatedAt: new Date() })
-      .where(and(eq(orders.id, orderId), eq(orders.tenantId, tenantId)))
+      .where(and(...conds))
       .returning();
 
     if (!order) return reply.code(404).send({ error: 'Order not found' });
@@ -164,6 +181,7 @@ export async function paymentRoutes(app: FastifyInstance) {
       `Payment received`,
       `Order ${order.orderCode} has been marked as paid`,
       `/payments`,
+      order.locationId,
     ).catch(console.error);
 
     // Auto-send invoice email
@@ -188,13 +206,17 @@ export async function paymentRoutes(app: FastifyInstance) {
   // ── Process refund ─────────────────────────────────────────
   app.post('/:orderId/refund', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
     const { orderId } = request.params as { orderId: string };
     const { reason } = refundSchema.parse(request.body);
 
+    const conds = [eq(orders.id, orderId), eq(orders.tenantId, tenantId)];
+    if (scope) conds.push(eq(orders.locationId, scope));
     const [order] = await db
       .select()
       .from(orders)
-      .where(and(eq(orders.id, orderId), eq(orders.tenantId, tenantId)))
+      .where(and(...conds))
       .limit(1);
 
     if (!order) return reply.code(404).send({ error: 'Order not found' });

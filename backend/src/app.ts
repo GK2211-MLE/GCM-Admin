@@ -11,6 +11,7 @@ import { locationRoutes } from './routes/locations.js';
 import { orderRoutes } from './routes/orders.js';
 import { customerRoutes } from './routes/customers.js';
 import { userRoutes } from './routes/users.js';
+import { rolePermissionRoutes } from './routes/role-permissions.js';
 import { settingsRoutes } from './routes/settings.js';
 import { promotionRoutes } from './routes/promotions.js';
 import { vendorRoutes } from './routes/vendors.js';
@@ -91,6 +92,7 @@ export async function buildApp() {
   await app.register(orderRoutes, { prefix: '/api/orders' });
   await app.register(customerRoutes, { prefix: '/api/customers' });
   await app.register(userRoutes, { prefix: '/api/users' });
+  await app.register(rolePermissionRoutes, { prefix: '/api/role-permissions' });
   await app.register(settingsRoutes, { prefix: '/api/settings' });
   await app.register(promotionRoutes, { prefix: '/api/promotions' });
   await app.register(vendorRoutes, { prefix: '/api/vendors' });

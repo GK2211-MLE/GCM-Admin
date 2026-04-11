@@ -2,15 +2,17 @@ import type { FastifyInstance } from 'fastify';
 import { eq, and, desc, count, gte, lte, ilike, or, ne } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { orders, orderItems, customers, appUsers } from '../db/schema.js';
-import { authGuard } from '../middleware/auth.js';
+import { authGuard, getLocationScope } from '../middleware/auth.js';
 import { getTenantId } from '../middleware/tenant.js';
 import { invoiceFilterSchema, formatCents } from '../shared/index.js';
 import { generateInvoiceHtml, sendInvoiceEmail } from '../services/invoice.js';
 
 export async function invoiceRoutes(app: FastifyInstance) {
   // List invoices (paid orders)
-  app.get('/', { preHandler: [authGuard] }, async (request) => {
+  app.get('/', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
     const filters = invoiceFilterSchema.parse(request.query);
     const offset = (filters.page - 1) * filters.limit;
 
@@ -19,6 +21,7 @@ export async function invoiceRoutes(app: FastifyInstance) {
       eq(orders.paymentStatus, 'paid'),
       ne(orders.status, 'cancelled'),
     ];
+    if (scope) conditions.push(eq(orders.locationId, scope));
 
     if (filters.dateFrom) conditions.push(gte(orders.createdAt, new Date(filters.dateFrom)));
     if (filters.dateTo) conditions.push(lte(orders.createdAt, new Date(filters.dateTo)));
@@ -93,12 +96,16 @@ export async function invoiceRoutes(app: FastifyInstance) {
   // Single invoice detail
   app.get('/:orderId', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
     const { orderId } = request.params as { orderId: string };
 
+    const conds = [eq(orders.id, orderId), eq(orders.tenantId, tenantId), eq(orders.paymentStatus, 'paid')];
+    if (scope) conds.push(eq(orders.locationId, scope));
     const [order] = await db
       .select()
       .from(orders)
-      .where(and(eq(orders.id, orderId), eq(orders.tenantId, tenantId), eq(orders.paymentStatus, 'paid')))
+      .where(and(...conds))
       .limit(1);
 
     if (!order) return reply.code(404).send({ error: 'Invoice not found' });
@@ -142,12 +149,16 @@ export async function invoiceRoutes(app: FastifyInstance) {
   // Print-friendly HTML invoice
   app.get('/:orderId/html', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
     const { orderId } = request.params as { orderId: string };
 
+    const conds = [eq(orders.id, orderId), eq(orders.tenantId, tenantId), eq(orders.paymentStatus, 'paid')];
+    if (scope) conds.push(eq(orders.locationId, scope));
     const [order] = await db
       .select()
       .from(orders)
-      .where(and(eq(orders.id, orderId), eq(orders.tenantId, tenantId), eq(orders.paymentStatus, 'paid')))
+      .where(and(...conds))
       .limit(1);
 
     if (!order) return reply.code(404).send({ error: 'Invoice not found' });
@@ -170,12 +181,16 @@ export async function invoiceRoutes(app: FastifyInstance) {
   // Send invoice email to customer
   app.post('/:orderId/send-email', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
     const { orderId } = request.params as { orderId: string };
 
+    const conds = [eq(orders.id, orderId), eq(orders.tenantId, tenantId), eq(orders.paymentStatus, 'paid')];
+    if (scope) conds.push(eq(orders.locationId, scope));
     const [order] = await db
       .select()
       .from(orders)
-      .where(and(eq(orders.id, orderId), eq(orders.tenantId, tenantId), eq(orders.paymentStatus, 'paid')))
+      .where(and(...conds))
       .limit(1);
 
     if (!order) return reply.code(404).send({ error: 'Invoice not found' });

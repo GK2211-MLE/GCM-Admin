@@ -20,7 +20,10 @@ export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded';
 
 export type DeliveryMethod = 'pickup' | 'delivery';
 
-export type AdminRole = 'owner' | 'manager' | 'staff';
+// AdminRole moved to ./permissions.ts (re-exported via shared/index.ts).
+// Both legacy values ('owner' | 'manager' | 'staff') and new values
+// ('admin' | 'store_manager' | 'store_staff') are accepted for one deploy
+// cycle via normalizeLegacyRole().
 
 export type ConversationStep =
   | 'welcome'
@@ -141,7 +144,7 @@ export interface AdminUser {
   email: string;
   passwordHash: string;
   name: string;
-  role: AdminRole;
+  role: string;
   active: boolean;
   createdAt: string;
   updatedAt: string;

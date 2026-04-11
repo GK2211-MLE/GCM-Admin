@@ -2,13 +2,19 @@ import type { FastifyInstance } from 'fastify';
 import { eq, and, sql, gte, lt, desc, count } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { orders, orderItems, products, customers, appUsers, storeInventory } from '../db/schema.js';
-import { authGuard } from '../middleware/auth.js';
+import { authGuard, getLocationScope } from '../middleware/auth.js';
 import { getTenantId } from '../middleware/tenant.js';
 
 export async function analyticsRoutes(app: FastifyInstance) {
-  app.get('/summary', { preHandler: [authGuard] }, async (request) => {
+  app.get('/summary', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
-    const { locationId } = request.query as { locationId?: string };
+    const scope = getLocationScope(request, reply);
+    if (reply.sent) return;
+    const { locationId: queryLocationId } = request.query as { locationId?: string };
+
+    // For non-admin users, force the scope to their assigned location no
+    // matter what they pass in the query string.
+    const locationId = scope ?? queryLocationId;
 
     // Base condition
     const tenantCond = eq(orders.tenantId, tenantId);
@@ -28,12 +34,22 @@ export async function analyticsRoutes(app: FastifyInstance) {
       total: sql<number>`count(distinct ${orders.appUserId})::int`,
     }).from(orders).where(conditions);
 
-    // Bot customers
-    const [botCustCount] = await db.select({
-      total: sql<number>`count(*)::int`,
-    }).from(customers).where(eq(customers.tenantId, tenantId));
+    // Bot customers — when scoped to a location, only count bot customers
+    // who have actually ordered at that location. Otherwise count all of them.
+    let botTotal = 0;
+    if (locationId) {
+      const [bc] = await db.select({
+        total: sql<number>`count(distinct ${orders.customerId})::int`,
+      }).from(orders).where(conditions);
+      botTotal = bc?.total ?? 0;
+    } else {
+      const [bc] = await db.select({
+        total: sql<number>`count(*)::int`,
+      }).from(customers).where(eq(customers.tenantId, tenantId));
+      botTotal = bc?.total ?? 0;
+    }
 
-    const totalCustomers = (custCount?.total ?? 0) + (botCustCount?.total ?? 0);
+    const totalCustomers = (custCount?.total ?? 0) + botTotal;
 
     // Growth: this week vs last week
     const now = new Date();

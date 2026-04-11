@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { locations } from '../db/schema.js';
-import { authGuard } from '../middleware/auth.js';
+import { authGuard, adminGuard } from '../middleware/auth.js';
 import { getTenantId } from '../middleware/tenant.js';
 import { createLocationSchema, updateLocationSchema } from '../shared/index.js';
 
@@ -17,8 +17,8 @@ export async function locationRoutes(app: FastifyInstance) {
     return { locations: rows };
   });
 
-  // Toggle location active status
-  app.patch('/:id/toggle', { preHandler: [authGuard] }, async (request, reply) => {
+  // Toggle location active status — admin only.
+  app.patch('/:id/toggle', { preHandler: [adminGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };
 
@@ -56,8 +56,8 @@ export async function locationRoutes(app: FastifyInstance) {
     return { location };
   });
 
-  // Create location
-  app.post('/', { preHandler: [authGuard] }, async (request) => {
+  // Create location — admin only.
+  app.post('/', { preHandler: [adminGuard] }, async (request) => {
     const tenantId = getTenantId(request);
     const data = createLocationSchema.parse(request.body);
 
@@ -69,8 +69,8 @@ export async function locationRoutes(app: FastifyInstance) {
     return { location };
   });
 
-  // Update location
-  app.put('/:id', { preHandler: [authGuard] }, async (request, reply) => {
+  // Update location — admin only.
+  app.put('/:id', { preHandler: [adminGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };
     const data = updateLocationSchema.parse(request.body);
@@ -85,8 +85,8 @@ export async function locationRoutes(app: FastifyInstance) {
     return { location };
   });
 
-  // Delete location (soft-delete: deactivate, since orders may reference it)
-  app.delete('/:id', { preHandler: [authGuard] }, async (request, reply) => {
+  // Delete location (soft-delete: deactivate, since orders may reference it). Admin only.
+  app.delete('/:id', { preHandler: [adminGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };
 

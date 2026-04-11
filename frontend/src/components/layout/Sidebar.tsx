@@ -2,6 +2,8 @@ import { NavLink, useLocation } from 'react-router';
 import { cn } from '@/lib/utils';
 import { useSidebarStore } from '@/stores/sidebar';
 import { useNotifications } from '@/features/notifications/api';
+import { useAuthStore } from '@/features/auth/store';
+import { useCanAccessPath } from '@/features/auth/permissions';
 import {
   LayoutDashboard,
   ShoppingCart,
@@ -20,6 +22,8 @@ import {
   X,
   Store,
   MapPin,
+  ShieldCheck,
+  UsersRound,
 } from 'lucide-react';
 
 const navItems = [
@@ -36,6 +40,8 @@ const navItems = [
   { label: 'CMS', icon: FileEdit, path: '/cms' },
   { label: 'Locations', icon: MapPin, path: '/locations' },
   { label: 'Notifications', icon: Bell, path: '/notifications' },
+  { label: 'Users & Permissions', icon: UsersRound, path: '/users' },
+  { label: 'Permissions', icon: ShieldCheck, path: '/settings/permissions' },
   { label: 'Settings', icon: Settings, path: '/settings' },
 ];
 
@@ -44,6 +50,13 @@ export function Sidebar() {
   const { collapsed, mobileOpen, toggleCollapsed, setMobileOpen } = useSidebarStore();
   const { data: notifData } = useNotifications();
   const unreadCount = notifData?.unreadCount ?? 0;
+  const canAccess = useCanAccessPath();
+  const user = useAuthStore((s) => s.user);
+
+  // Filter by permission. Admin sees everything; non-admin sees only the
+  // pages their role allows. If the matrix is still loading, show the
+  // full list optimistically — the route guard catches actual access.
+  const visibleNavItems = navItems.filter((item) => canAccess(item.path));
 
   return (
     <>
@@ -91,7 +104,7 @@ export function Sidebar() {
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto p-2">
           <ul className="space-y-1">
-            {navItems.map((item) => {
+            {visibleNavItems.map((item) => {
               const isActive =
                 location.pathname === item.path ||
                 (item.path !== '/dashboard' && location.pathname.startsWith(item.path));
@@ -130,6 +143,19 @@ export function Sidebar() {
             })}
           </ul>
         </nav>
+
+        {/* Scope footer — makes the active location obvious so a store
+            manager always knows what data they're seeing. */}
+        {!collapsed && user && (
+          <div className="border-t border-(--border-default) p-3 text-xs">
+            <div className="truncate font-medium text-(--text-primary)">{user.name}</div>
+            <div className="mt-0.5 truncate text-(--text-tertiary)">
+              {user.role === 'admin' || user.role === 'owner'
+                ? 'Admin · All locations'
+                : `${user.role.replace('_', ' ')} · ${user.assignedLocationName ?? 'No location'}`}
+            </div>
+          </div>
+        )}
       </aside>
     </>
   );

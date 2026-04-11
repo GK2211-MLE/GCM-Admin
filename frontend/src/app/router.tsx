@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router';
 import { AdminLayout } from '@/app/layouts/AdminLayout';
 import { AuthLayout } from '@/app/layouts/AuthLayout';
 import { ProtectedRoute } from '@/features/auth/ProtectedRoute';
+import { RequirePermission } from '@/features/auth/RequirePermission';
 import { LoadingSpinner } from '@/components/feedback/LoadingSpinner';
 
 const LoginPage = lazy(() => import('@/features/auth/LoginPage').then(m => ({ default: m.LoginPage })));
@@ -24,6 +25,7 @@ const AnalyticsPage = lazy(() => import('@/features/analytics/AnalyticsPage').th
 const NotificationPage = lazy(() => import('@/features/notifications/NotificationPage').then(m => ({ default: m.NotificationPage })));
 const GeneralPage = lazy(() => import('@/features/settings/GeneralPage').then(m => ({ default: m.GeneralPage })));
 const UsersPage = lazy(() => import('@/features/settings/UsersPage').then(m => ({ default: m.UsersPage })));
+const RolePermissionsPage = lazy(() => import('@/features/settings/RolePermissionsPage').then(m => ({ default: m.RolePermissionsPage })));
 const LocationsPage = lazy(() => import('@/features/settings/LocationsPage').then(m => ({ default: m.LocationsPage })));
 const ActivityLogPage = lazy(() => import('@/features/settings/ActivityLogPage').then(m => ({ default: m.ActivityLogPage })));
 const CMSPage = lazy(() => import('@/features/cms/CMSPage').then(m => ({ default: m.CMSPage })));
@@ -47,27 +49,30 @@ export function AppRouter() {
 
       <Route element={<ProtectedRoute />}>
         <Route element={<AdminLayout />}>
-          <Route path="/dashboard" element={<SuspenseWrapper><DashboardPage /></SuspenseWrapper>} />
-          <Route path="/customers" element={<SuspenseWrapper><CustomerListPage /></SuspenseWrapper>} />
-          <Route path="/customers/:id" element={<SuspenseWrapper><CustomerDetailPage /></SuspenseWrapper>} />
-          <Route path="/products" element={<SuspenseWrapper><ProductListPage /></SuspenseWrapper>} />
-          <Route path="/products/:id" element={<SuspenseWrapper><ProductDetailPage /></SuspenseWrapper>} />
-          <Route path="/orders" element={<SuspenseWrapper><OrderListPage /></SuspenseWrapper>} />
-          <Route path="/orders/create" element={<SuspenseWrapper><CreateOrderPage /></SuspenseWrapper>} />
-          <Route path="/orders/:code" element={<SuspenseWrapper><OrderDetailPage /></SuspenseWrapper>} />
-          <Route path="/invoices" element={<SuspenseWrapper><InvoiceListPage /></SuspenseWrapper>} />
-          <Route path="/payments" element={<SuspenseWrapper><PaymentListPage /></SuspenseWrapper>} />
+          <Route path="/dashboard" element={<SuspenseWrapper><RequirePermission pageKey="dashboard"><DashboardPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/customers" element={<SuspenseWrapper><RequirePermission pageKey="customers"><CustomerListPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/customers/:id" element={<SuspenseWrapper><RequirePermission pageKey="customers"><CustomerDetailPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/products" element={<SuspenseWrapper><RequirePermission pageKey="products"><ProductListPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/products/:id" element={<SuspenseWrapper><RequirePermission pageKey="products"><ProductDetailPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/orders" element={<SuspenseWrapper><RequirePermission pageKey="orders.view"><OrderListPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/orders/create" element={<SuspenseWrapper><RequirePermission pageKey="orders.create"><CreateOrderPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/orders/:code" element={<SuspenseWrapper><RequirePermission pageKey="orders.view"><OrderDetailPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/invoices" element={<SuspenseWrapper><RequirePermission pageKey="invoices"><InvoiceListPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/payments" element={<SuspenseWrapper><RequirePermission pageKey="payments"><PaymentListPage /></RequirePermission></SuspenseWrapper>} />
           <Route path="/fulfillment" element={<SuspenseWrapper><FulfillmentPage /></SuspenseWrapper>} />
-          <Route path="/inventory" element={<SuspenseWrapper><InventoryPage /></SuspenseWrapper>} />
-          <Route path="/catalog" element={<SuspenseWrapper><CatalogPage /></SuspenseWrapper>} />
-          <Route path="/promotions" element={<SuspenseWrapper><PromotionListPage /></SuspenseWrapper>} />
-          <Route path="/analytics" element={<SuspenseWrapper><AnalyticsPage /></SuspenseWrapper>} />
-          <Route path="/notifications" element={<SuspenseWrapper><NotificationPage /></SuspenseWrapper>} />
-          <Route path="/settings" element={<SuspenseWrapper><GeneralPage /></SuspenseWrapper>} />
-          <Route path="/settings/users" element={<SuspenseWrapper><UsersPage /></SuspenseWrapper>} />
-          <Route path="/locations" element={<SuspenseWrapper><LocationsPage /></SuspenseWrapper>} />
+          <Route path="/inventory" element={<SuspenseWrapper><RequirePermission pageKey="inventory"><InventoryPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/catalog" element={<SuspenseWrapper><RequirePermission pageKey="catalog"><CatalogPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/promotions" element={<SuspenseWrapper><RequirePermission pageKey="promotions"><PromotionListPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/analytics" element={<SuspenseWrapper><RequirePermission pageKey="analytics"><AnalyticsPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/notifications" element={<SuspenseWrapper><RequirePermission pageKey="notifications"><NotificationPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/settings" element={<SuspenseWrapper><RequirePermission pageKey="settings"><GeneralPage /></RequirePermission></SuspenseWrapper>} />
+          {/* Users & Permissions — both /users (new) and /settings/users (legacy) point at the same page */}
+          <Route path="/users" element={<SuspenseWrapper><RequirePermission pageKey="users_permissions"><UsersPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/settings/users" element={<SuspenseWrapper><RequirePermission pageKey="users_permissions"><UsersPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/settings/permissions" element={<SuspenseWrapper><RequirePermission pageKey="users_permissions"><RolePermissionsPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/locations" element={<SuspenseWrapper><RequirePermission pageKey="locations"><LocationsPage /></RequirePermission></SuspenseWrapper>} />
           <Route path="/settings/activity" element={<SuspenseWrapper><ActivityLogPage /></SuspenseWrapper>} />
-          <Route path="/cms" element={<SuspenseWrapper><CMSPage /></SuspenseWrapper>} />
+          <Route path="/cms" element={<SuspenseWrapper><RequirePermission pageKey="cms"><CMSPage /></RequirePermission></SuspenseWrapper>} />
           <Route path="/procurement/vendors" element={<SuspenseWrapper><VendorListPage /></SuspenseWrapper>} />
           <Route path="/procurement/orders" element={<SuspenseWrapper><PurchaseOrdersPage /></SuspenseWrapper>} />
         </Route>

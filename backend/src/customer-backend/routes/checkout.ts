@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { eq, and } from 'drizzle-orm';
 import Stripe from 'stripe';
 import { db } from '../../db/client.js';
-import { orders, orderItems, products, promotions, tenants } from '../../db/schema.js';
+import { orders, orderItems, products, productLocations, promotions, tenants } from '../../db/schema.js';
 import { config } from '../../config.js';
 import { customerAuthGuard } from '../middleware/auth.js';
 import { checkoutSchema, confirmPaymentSchema } from '../validation/schemas.js';
@@ -27,7 +27,14 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
     const customer = request.customer!;
     const body = checkoutSchema.parse(request.body);
 
-    // 1. Look up server-side prices (NEVER trust client prices)
+    // 1. Look up server-side prices (NEVER trust client prices) AND verify
+    //    that every product the customer is trying to buy is actually
+    //    available at the location they picked. Otherwise a Plano customer
+    //    could craft a request that adds a Frisco-only SKU to their cart
+    //    and the order would land at the wrong store with the wrong stock.
+    //    A product is "available at" a location when EITHER it has zero
+    //    rows in product_locations (catalog-wide) OR it has a row for the
+    //    requested location_id.
     const verifiedItems = await Promise.all(
       body.items.map(async (item) => {
         const [product] = await db
@@ -47,6 +54,22 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
         }
         if (!product.active || !product.inStock) {
           throw { statusCode: 400, message: `Product unavailable: ${product.name}` };
+        }
+
+        // Per-location availability check.
+        if (body.location_id) {
+          const tags = await db
+            .select({ locationId: productLocations.locationId })
+            .from(productLocations)
+            .where(eq(productLocations.productId, product.id));
+          const isCatalogWide = tags.length === 0;
+          const isAtLocation = tags.some((t) => t.locationId === body.location_id);
+          if (!isCatalogWide && !isAtLocation) {
+            throw {
+              statusCode: 400,
+              message: `${product.name} is not available at the selected store`,
+            };
+          }
         }
 
         return {

@@ -164,6 +164,12 @@ export const orderItems = pgTable('order_items', {
 });
 
 /* ── Admin Users ─────────────────────────────────────────────── */
+// Roles: 'admin' | 'store_manager' | 'store_staff'
+//   - admin           → full access, all locations
+//   - store_manager   → assignedLocationId required, manages that store
+//   - store_staff     → assignedLocationId required, view-only for that store
+// Legacy values 'owner' / 'manager' / 'staff' still appear in old DBs and are
+// translated to the new names by normalizeLegacyRole() at the auth layer.
 export const adminUsers = pgTable(
   'admin_users',
   {
@@ -172,12 +178,59 @@ export const adminUsers = pgTable(
     email: varchar('email', { length: 255 }).notNull(),
     passwordHash: varchar('password_hash', { length: 255 }).notNull(),
     name: varchar('name', { length: 255 }).notNull(),
-    role: varchar('role', { length: 20 }).notNull().default('staff'),
+    phone: varchar('phone', { length: 32 }),
+    role: varchar('role', { length: 20 }).notNull().default('store_staff'),
+    // Null for admins ("all locations"), required for store_manager / store_staff.
+    // ON DELETE SET NULL is added by the migration so deleting a location does
+    // not orphan the row.
+    assignedLocationId: uuid('assigned_location_id').references(() => locations.id),
     active: boolean('active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex('admin_users_email_idx').on(t.email)],
+);
+
+/* ── Role Permissions ────────────────────────────────────────── */
+// Per-tenant matrix of which page each non-admin role can access.
+// Admin is hard-coded to "always allowed" and never appears here.
+// Seeded on tenant boot from PAGES defaults in shared/permissions.ts.
+export const rolePermissions = pgTable(
+  'role_permissions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+    role: varchar('role', { length: 20 }).notNull(), // 'store_manager' | 'store_staff'
+    pageKey: varchar('page_key', { length: 50 }).notNull(),
+    allowed: boolean('allowed').notNull().default(false),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('role_permissions_unique_idx').on(t.tenantId, t.role, t.pageKey)],
+);
+
+/* ── Product Locations ───────────────────────────────────────── */
+// Many-to-many between products and locations.
+//
+// Visibility rule: a product with ZERO rows in product_locations is treated
+// as "available at all locations" (catalog-wide). A product with rows is
+// only visible at the locations listed.
+//
+// This is the source of truth for per-store product availability — used by
+// both the admin product list (filtered by the user's assigned location for
+// non-admin roles) and the customer-facing storefront (filtered by the
+// active store the customer selected).
+export const productLocations = pgTable(
+  'product_locations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    productId: uuid('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
+    locationId: uuid('location_id').notNull().references(() => locations.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('product_locations_unique_idx').on(t.productId, t.locationId),
+    index('product_locations_location_idx').on(t.locationId),
+  ],
 );
 
 /* ── Promotions ──────────────────────────────────────────────── */
@@ -402,11 +455,15 @@ export const recipes = pgTable(
 );
 
 /* ── Notifications ──────────────────────────────────────────── */
+// locationId is nullable so legacy/global notifications keep working.
+//   - locationId IS NULL → visible to anyone in the tenant (admin sees them too)
+//   - locationId = X     → only admin and users assigned to location X see them
 export const notifications = pgTable(
   'notifications',
   {
     id: uuid('id').defaultRandom().primaryKey(),
     tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+    locationId: uuid('location_id').references(() => locations.id),
     type: varchar('type', { length: 30 }).notNull().default('order'), // 'order' | 'payment' | 'inventory'
     title: varchar('title', { length: 255 }).notNull(),
     message: text('message').notNull(),

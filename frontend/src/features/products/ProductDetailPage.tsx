@@ -355,7 +355,15 @@ export function ProductDetailPage() {
     <div className="space-y-6">
       <PageHeader
         title={isNew ? 'New Product' : (product?.name ?? '')}
-        description={isNew ? 'Create a new product in your catalog.' : `Category: ${product?.category ?? ''}`}
+        description={
+          isNew
+            ? 'Create a new product in your catalog.'
+            : `Category: ${
+                product?.category
+                  ? product.category.charAt(0).toUpperCase() + product.category.slice(1).toLowerCase()
+                  : ''
+              }`
+        }
         actions={
           <div className="flex items-center gap-2">
             {!isNew && (

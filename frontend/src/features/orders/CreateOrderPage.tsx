@@ -95,7 +95,11 @@ export function CreateOrderPage() {
     () => lineItems.reduce((s, li) => s + li.quantity * li.unitPrice, 0),
     [lineItems],
   );
-  const taxRate = 0.085; // 8.5% US sales tax
+  // Matches the customer site's fallback in farm2cook-customer/lib/constants.ts.
+  // Both surfaces should ideally pull this from /api/settings so the admin
+  // can change it in one place, but until that's wired the hardcoded value
+  // is shared between customer and admin so totals reconcile.
+  const taxRate = 0.0825; // 8.25%
   const taxAmount = Math.round(subtotal * taxRate);
   const total = subtotal + taxAmount;
 
@@ -394,7 +398,7 @@ export function CreateOrderPage() {
                   <span className="tabular-nums">{formatCurrency(subtotal / 100)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-[var(--text-secondary)]">Tax (8.5%)</span>
+                  <span className="text-[var(--text-secondary)]">Tax (8.25%)</span>
                   <span className="tabular-nums">{formatCurrency(taxAmount / 100)}</span>
                 </div>
                 <div className="flex justify-between border-t border-[var(--border-default)] pt-2 text-lg font-semibold">

@@ -480,6 +480,17 @@ WHERE p.location_id IS NOT NULL
   );
 
 DO $$ BEGIN ALTER TABLE notifications ADD COLUMN location_id UUID REFERENCES locations(id); EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+
+-- Backfill empty product slugs. Products inserted via early admin flows
+-- (or test scaffolding) sometimes ended up with an empty slug, which makes
+-- the customer-side /shop/[slug] URL 404. This one-liner regenerates a
+-- slug from the name for any product that still has an empty one.
+-- Runs on every boot — a no-op if every product already has a slug.
+UPDATE products
+SET slug = regexp_replace(lower(trim(name)), '[^a-z0-9]+', '-', 'g')
+WHERE slug IS NULL OR trim(slug) = '';
+-- Trim any trailing/leading dashes left over from the replacement.
+UPDATE products SET slug = regexp_replace(slug, '(^-+|-+$)', '', 'g') WHERE slug ~ '(^-|-$)';
 `;
 
 export async function runStartup(): Promise<string> {

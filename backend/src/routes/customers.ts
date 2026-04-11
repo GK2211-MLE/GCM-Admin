@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, and, desc, ilike, or, count, sql } from 'drizzle-orm';
+import bcrypt from 'bcrypt';
 import { db } from '../db/client.js';
 import { customers, orders, appUsers } from '../db/schema.js';
 import { authGuard } from '../middleware/auth.js';
@@ -150,5 +151,37 @@ export async function customerRoutes(app: FastifyInstance) {
 
     if (!customer) return reply.code(404).send({ error: 'Customer not found' });
     return { customer };
+  });
+
+  // Admin: reset an app_user (customer-website account) password by email.
+  // Used when a customer can't access their email and the admin needs to
+  // hand them a new password directly. Requires admin auth.
+  app.post('/app-users/reset-password', { preHandler: [authGuard] }, async (request, reply) => {
+    const body = request.body as { email?: string; newPassword?: string };
+    if (!body?.email || !body?.newPassword) {
+      return reply.code(400).send({ error: 'email and newPassword are required' });
+    }
+    if (body.newPassword.length < 6) {
+      return reply.code(400).send({ error: 'newPassword must be at least 6 characters' });
+    }
+
+    const tenantId = getTenantId(request);
+    const emailLower = body.email.trim().toLowerCase();
+
+    const [user] = await db
+      .select({ id: appUsers.id, email: appUsers.email })
+      .from(appUsers)
+      .where(and(eq(appUsers.email, emailLower), eq(appUsers.tenantId, tenantId)))
+      .limit(1);
+
+    if (!user) return reply.code(404).send({ error: 'No app_user found with that email' });
+
+    const passwordHash = await bcrypt.hash(body.newPassword, 12);
+    await db
+      .update(appUsers)
+      .set({ passwordHash, refreshToken: null, updatedAt: new Date() })
+      .where(eq(appUsers.id, user.id));
+
+    return { success: true, email: user.email };
   });
 }

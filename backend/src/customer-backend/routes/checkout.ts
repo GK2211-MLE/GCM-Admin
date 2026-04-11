@@ -114,6 +114,26 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
     const deliveryFee = body.fulfillment_type === 'delivery' ? 599 : 0; // $5.99 — must match frontend default in src/lib/constants.ts
     const total = discountedSubtotal + tax + deliveryFee;
 
+    // ── Test-bypass whitelist ────────────────────────────────────
+    // If the logged-in customer's email is in TEST_BYPASS_EMAILS env
+    // var, the order skips Stripe entirely and is auto-marked paid +
+    // confirmed. Used for end-to-end testing without burning real cards
+    // and without exposing the bypass to actual customers.
+    //
+    // This ALSO closes a security hole: previously the legacy
+    // body.skip_payment flag could be set by ANY caller (a malicious
+    // customer could POST {skip_payment:true} and get free orders).
+    // Now skip_payment is only honored for whitelisted emails — random
+    // customers cannot exploit it.
+    const bypassWhitelist = config.TEST_BYPASS_EMAILS
+      .split(',')
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+    const customerEmailLower = (customer.email || '').toLowerCase();
+    const customerIsWhitelisted = bypassWhitelist.includes(customerEmailLower);
+    const skipPayment = customerIsWhitelisted && (body.skip_payment !== false);
+    // ─────────────────────────────────────────────────────────────
+
     // 6. Create order
     const orderCode = generateOrderCode();
     const [order] = await db
@@ -123,9 +143,9 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
         locationId: body.location_id ?? null,
         appUserId: customer.id,
         orderCode,
-        status: body.skip_payment ? 'confirmed' : 'pending_payment',
-        paymentMethod: body.skip_payment ? 'admin' : 'stripe',
-        paymentStatus: body.skip_payment ? 'paid' : 'pending',
+        status: skipPayment ? 'confirmed' : 'pending_payment',
+        paymentMethod: skipPayment ? 'test_bypass' : 'stripe',
+        paymentStatus: skipPayment ? 'paid' : 'pending',
         deliveryMethod: body.fulfillment_type,
         deliveryAddress: null,
         subtotal: discountedSubtotal,
@@ -151,8 +171,11 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
       );
     }
 
-    // 8. If skip_payment — return order immediately (admin bypass)
-    if (body.skip_payment) {
+    // 8. Bypass path — return the order without a clientSecret. The
+    // customer site sees no clientSecret and no checkout_url, so it
+    // navigates straight to /order-success and treats the order as
+    // already paid (which it is, in our DB).
+    if (skipPayment) {
       return {
         order: {
           id: order.id,
@@ -160,7 +183,7 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
           status: order.status,
           total: order.total,
         },
-        message: 'Order created and marked as paid',
+        message: 'Order created via test bypass (Stripe skipped)',
       };
     }
 

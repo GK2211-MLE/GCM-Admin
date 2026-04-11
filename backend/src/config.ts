@@ -28,6 +28,12 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().default(''),
   GOOGLE_CLIENT_SECRET: z.string().default(''),
   CUSTOMER_FRONTEND_URL: z.string().default('http://localhost:3000'),
+  // Comma-separated list of customer emails that bypass Stripe checkout
+  // entirely. Their orders are auto-marked confirmed + paid so we can
+  // test the full order flow without burning cards or hitting the live
+  // Stripe account. Real customer emails NOT in this list still pay
+  // normally. Leave empty in production to disable the bypass.
+  TEST_BYPASS_EMAILS: z.string().default(''),
 });
 
 export type Env = z.infer<typeof envSchema>;

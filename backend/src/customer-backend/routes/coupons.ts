@@ -24,6 +24,10 @@ export async function couponRoutes(app: FastifyInstance) {
         minOrder: promotions.minOrder,
         startsAt: promotions.startsAt,
         expiresAt: promotions.expiresAt,
+        // Optional image (used by checkout to render a small thumb next
+        // to each available coupon) — empty string if admin never set one.
+        imageUrl: promotions.imageUrl,
+        popupTitle: promotions.popupTitle,
       })
       .from(promotions)
       .where(

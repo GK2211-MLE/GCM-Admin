@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import formbody from '@fastify/formbody';
+import multipart from '@fastify/multipart';
 import { config } from './config.js';
 import { errorHandler } from './middleware/error.js';
 import { healthRoutes } from './routes/health.js';
@@ -32,6 +33,7 @@ import { contactMessageRoutes } from './routes/contact-messages.js';
 import { newsletterRoutes } from './routes/newsletter-subs.js';
 import { adminReviewRoutes } from './routes/reviews-admin.js';
 import { adminWishlistRoutes } from './routes/wishlists-admin.js';
+import { uploadRoutes } from './routes/uploads.js';
 
 /* ════════════════════════════════════════════════════════════════
    CUSTOMER WEBSITE ROUTES (from customer-backend/)
@@ -46,6 +48,7 @@ import { reviewRoutes } from './customer-backend/routes/reviews.js';
 import { couponRoutes } from './customer-backend/routes/coupons.js';
 import { contactRoutes } from './customer-backend/routes/contact.js';
 import { settingsRoutes as customerSettingsRoutes } from './customer-backend/routes/settings.js';
+import { popupRoutes } from './customer-backend/routes/popups.js';
 
 export async function buildApp() {
   const app = Fastify({
@@ -70,6 +73,12 @@ export async function buildApp() {
     credentials: true,
   });
   await app.register(formbody);
+  await app.register(multipart, {
+    limits: {
+      fileSize: 8 * 1024 * 1024, // 8 MB — must match the cap in routes/uploads.ts
+      files: 1,
+    },
+  });
 
   // Error handler
   app.setErrorHandler(errorHandler);
@@ -104,6 +113,7 @@ export async function buildApp() {
   await app.register(newsletterRoutes, { prefix: '/api/newsletter-subs' });
   await app.register(adminReviewRoutes, { prefix: '/api/admin/reviews' });
   await app.register(adminWishlistRoutes, { prefix: '/api/admin/wishlists' });
+  await app.register(uploadRoutes, { prefix: '/api/uploads' });
 
   /* ════════════════════════════════════════════════════════════════
      CUSTOMER WEBSITE ROUTES (from customer-backend/)
@@ -118,6 +128,7 @@ export async function buildApp() {
   await app.register(couponRoutes, { prefix: '/api/customer/coupons' });
   await app.register(contactRoutes, { prefix: '/api/customer/contact' });
   await app.register(customerSettingsRoutes, { prefix: '/api/customer/settings' });
+  await app.register(popupRoutes, { prefix: '/api/customer/popups' });
 
   return app;
 }

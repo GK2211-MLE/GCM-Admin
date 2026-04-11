@@ -416,6 +416,17 @@ CREATE TABLE IF NOT EXISTS newsletter_subs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS newsletter_email_idx ON newsletter_subs (tenant_id, email);
+
+-- ============================================================
+-- Customer-facing popup fields on the existing promotions table
+-- (added Apr 2026 for the storefront homepage popup feature)
+-- ============================================================
+DO $$ BEGIN ALTER TABLE promotions ADD COLUMN image_url TEXT NOT NULL DEFAULT ''; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE promotions ADD COLUMN show_as_popup BOOLEAN NOT NULL DEFAULT false; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE promotions ADD COLUMN popup_title VARCHAR(255) NOT NULL DEFAULT ''; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE promotions ADD COLUMN popup_body TEXT NOT NULL DEFAULT ''; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE promotions ADD COLUMN target_web BOOLEAN NOT NULL DEFAULT true; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE promotions ADD COLUMN target_app BOOLEAN NOT NULL DEFAULT true; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 `;
 
 export async function runStartup(): Promise<string> {

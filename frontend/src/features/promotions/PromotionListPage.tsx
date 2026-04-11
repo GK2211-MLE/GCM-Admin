@@ -16,7 +16,8 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
-import { Plus, Pencil, Trash2, Tag } from 'lucide-react';
+import { Plus, Pencil, Trash2, Tag, Megaphone } from 'lucide-react';
+import { ImageField } from '@/components/ui/image-field';
 
 interface Promotion {
   id: string;
@@ -31,6 +32,13 @@ interface Promotion {
   startsAt: string;
   expiresAt: string;
   createdAt: string;
+  // Customer-facing popup fields (added Apr 2026)
+  imageUrl?: string;
+  showAsPopup?: boolean;
+  popupTitle?: string;
+  popupBody?: string;
+  targetWeb?: boolean;
+  targetApp?: boolean;
 }
 
 const EMPTY_FORM = {
@@ -43,6 +51,13 @@ const EMPTY_FORM = {
   active: true,
   startsAt: '',
   expiresAt: '',
+  // Popup defaults: off, no image, target both portals
+  imageUrl: '',
+  showAsPopup: false,
+  popupTitle: '',
+  popupBody: '',
+  targetWeb: true,
+  targetApp: true,
 };
 
 export function PromotionListPage() {
@@ -108,6 +123,12 @@ export function PromotionListPage() {
       active: promo.active,
       startsAt: promo.startsAt?.split('T')[0] ?? '',
       expiresAt: promo.expiresAt?.split('T')[0] ?? '',
+      imageUrl: promo.imageUrl ?? '',
+      showAsPopup: promo.showAsPopup ?? false,
+      popupTitle: promo.popupTitle ?? '',
+      popupBody: promo.popupBody ?? '',
+      targetWeb: promo.targetWeb ?? true,
+      targetApp: promo.targetApp ?? true,
     });
     setFormOpen(true);
   }, []);
@@ -126,6 +147,12 @@ export function PromotionListPage() {
       active: form.active,
       startsAt: form.startsAt || new Date().toISOString(),
       expiresAt: form.expiresAt || '2030-12-31',
+      imageUrl: form.imageUrl,
+      showAsPopup: form.showAsPopup,
+      popupTitle: form.popupTitle,
+      popupBody: form.popupBody,
+      targetWeb: form.targetWeb,
+      targetApp: form.targetApp,
     });
   }, [form, saveMutation]);
 
@@ -223,7 +250,7 @@ export function PromotionListPage() {
 
       {/* Add/Edit Dialog */}
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editTarget ? 'Edit Promotion' : 'Add Promotion'}</DialogTitle>
             <DialogDescription>
@@ -288,6 +315,85 @@ export function PromotionListPage() {
             <div className="flex items-center justify-between rounded-lg border p-3">
               <span className="text-sm font-medium">Active</span>
               <Switch checked={form.active} onCheckedChange={(checked) => setForm({ ...form, active: checked })} />
+            </div>
+
+            {/* ── Customer-facing popup section ───────────────────── */}
+            <div className="rounded-xl border border-dashed border-[var(--border)] p-4 space-y-4 bg-[var(--bg-secondary)]/40">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 rounded-lg bg-primary-500/10 p-2 text-primary-500">
+                    <Megaphone className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold">Show as popup on customer site</div>
+                    <p className="text-xs text-[var(--text-tertiary)] mt-0.5">
+                      Display this promo as a centered modal on the homepage (once per session). Optionally show in the mobile app too.
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  checked={form.showAsPopup}
+                  onCheckedChange={(checked) => setForm({ ...form, showAsPopup: checked })}
+                />
+              </div>
+
+              {form.showAsPopup && (
+                <div className="space-y-4 pt-2">
+                  {/* Image upload / URL */}
+                  <ImageField
+                    label="Popup Image (optional)"
+                    value={form.imageUrl}
+                    onChange={(url) => setForm({ ...form, imageUrl: url })}
+                    helper="Recommended 1600x900. Auto-resized on upload."
+                  />
+
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium">Popup Title (optional)</label>
+                    <Input
+                      value={form.popupTitle}
+                      onChange={(e) => setForm({ ...form, popupTitle: e.target.value })}
+                      placeholder="e.g. Welcome to Farm2Cook!"
+                    />
+                    <p className="text-xs text-[var(--text-tertiary)] mt-1">
+                      Defaults to "Save {form.discountValue || 'X'}% OFF" if blank.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium">Popup Body (optional)</label>
+                    <textarea
+                      rows={3}
+                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/20"
+                      value={form.popupBody}
+                      onChange={(e) => setForm({ ...form, popupBody: e.target.value })}
+                      placeholder="A short message — falls back to the description if blank."
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-2 block text-sm font-medium">Show in</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="flex items-center justify-between rounded-lg border border-[var(--border)] p-3 cursor-pointer hover:border-primary-500/50">
+                        <span className="text-sm">Customer Website</span>
+                        <Switch
+                          checked={form.targetWeb}
+                          onCheckedChange={(checked) => setForm({ ...form, targetWeb: checked })}
+                        />
+                      </label>
+                      <label className="flex items-center justify-between rounded-lg border border-[var(--border)] p-3 cursor-pointer hover:border-primary-500/50">
+                        <span className="text-sm">Mobile App</span>
+                        <Switch
+                          checked={form.targetApp}
+                          onCheckedChange={(checked) => setForm({ ...form, targetApp: checked })}
+                        />
+                      </label>
+                    </div>
+                    <p className="text-xs text-[var(--text-tertiary)] mt-1.5">
+                      Both portals show the popup by default. Uncheck to limit it.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           <DialogFooter>

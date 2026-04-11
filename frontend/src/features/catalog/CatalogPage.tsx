@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dialog';
 import { LoadingSpinner } from '@/components/feedback/LoadingSpinner';
 import { EmptyState } from '@/components/feedback/EmptyState';
+import { ImageField } from '@/components/ui/image-field';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -396,15 +397,14 @@ export function CatalogPage() {
               </p>
             </div>
 
-            {/* Image URL */}
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-[var(--text-primary)]">Image URL</label>
-              <Input
-                placeholder="https://example.com/category-image.jpg"
-                value={form.imageUrl}
-                onChange={(e) => updateField('imageUrl', e.target.value)}
-              />
-            </div>
+            {/* Image (URL or upload) */}
+            <ImageField
+              label="Category Image"
+              value={form.imageUrl}
+              onChange={(url) => updateField('imageUrl', url)}
+              helper="Paste a direct image URL or upload a file."
+            />
+
 
             {/* Sort Order */}
             <div className="space-y-1.5">

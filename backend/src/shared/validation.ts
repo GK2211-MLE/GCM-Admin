@@ -172,6 +172,13 @@ export const createPromotionSchema = z.object({
   active: z.boolean().default(true),
   startsAt: z.string(),
   expiresAt: z.string(),
+  // Customer-facing popup fields (all optional, default to "no popup")
+  imageUrl: z.string().default(''),
+  showAsPopup: z.boolean().default(false),
+  popupTitle: z.string().default(''),
+  popupBody: z.string().default(''),
+  targetWeb: z.boolean().default(true),
+  targetApp: z.boolean().default(true),
 });
 export type CreatePromotionInput = z.infer<typeof createPromotionSchema>;
 

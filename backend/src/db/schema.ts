@@ -195,6 +195,18 @@ export const promotions = pgTable('promotions', {
   startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  // ── Customer-facing popup fields (added Apr 2026) ────────────
+  // When showAsPopup=true, the customer storefront will show this promo as
+  // a centered modal popup on the homepage (once per session). The image
+  // is optional and is uploaded via /api/uploads/image. targetWeb / targetApp
+  // let the admin choose which portals see the popup; the data is exposed
+  // in the API so the mobile app can opt in too.
+  imageUrl: text('image_url').notNull().default(''),
+  showAsPopup: boolean('show_as_popup').notNull().default(false),
+  popupTitle: varchar('popup_title', { length: 255 }).notNull().default(''),
+  popupBody: text('popup_body').notNull().default(''),
+  targetWeb: boolean('target_web').notNull().default(true),
+  targetApp: boolean('target_app').notNull().default(true),
 });
 
 /* ── Vendors ─────────────────────────────────────────────────── */

@@ -21,6 +21,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
 import { LoadingSpinner } from '@/components/feedback/LoadingSpinner';
+import { ImageField } from '@/components/ui/image-field';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -386,21 +387,14 @@ export function ProductDetailPage() {
                   />
                 </div>
 
-                {/* Image URL - full width */}
-                <div className="space-y-1.5 md:col-span-2">
-                  <label className="text-sm font-medium text-[var(--text-primary)]">Image URL</label>
-                  <div className="relative">
-                    <Upload className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-tertiary)]" />
-                    <Input
-                      className="pl-9"
-                      placeholder="https://example.com/product-image.jpg"
-                      value={form.imageUrl}
-                      onChange={(e) => updateField('imageUrl', e.target.value)}
-                    />
-                  </div>
-                  <p className="text-xs text-[var(--text-tertiary)]">
-                    Paste a direct link to the product image
-                  </p>
+                {/* Image (URL or upload) — full width */}
+                <div className="md:col-span-2">
+                  <ImageField
+                    label="Product Image"
+                    value={form.imageUrl}
+                    onChange={(url) => updateField('imageUrl', url)}
+                    helper="Paste a direct image URL or upload a file (auto-resized to 1600px, JPEG)."
+                  />
                 </div>
 
                 {/* Category */}

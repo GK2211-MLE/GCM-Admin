@@ -286,7 +286,39 @@ export async function orderRoutes(app: FastifyInstance) {
   app.patch('/:id/status', { preHandler: [authGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };
+    const body = request.body as { status: string; notes?: string; force?: boolean };
     const { status, notes } = updateOrderStatusSchema.parse(request.body);
+    const force = body.force === true;
+
+    // Look up the existing order to check current payment state
+    const [existing] = await db
+      .select()
+      .from(orders)
+      .where(and(eq(orders.id, id), eq(orders.tenantId, tenantId)))
+      .limit(1);
+
+    if (!existing) return reply.code(404).send({ error: 'Order not found' });
+
+    // Block confirming/fulfilling Stripe orders that haven't been paid yet,
+    // unless the admin explicitly forces it via { force: true }. The Stripe
+    // webhook is the only thing that should mark a Stripe order as paid.
+    const blockedStatuses = ['confirmed', 'preparing', 'ready_for_pickup', 'out_for_delivery', 'delivered'];
+    const isStripeOrder = existing.paymentMethod === 'stripe';
+    if (
+      isStripeOrder &&
+      existing.paymentStatus !== 'paid' &&
+      blockedStatuses.includes(status) &&
+      !force
+    ) {
+      return reply.code(409).send({
+        error: 'Cannot fulfill an unpaid Stripe order',
+        details: {
+          paymentStatus: existing.paymentStatus,
+          paymentMethod: existing.paymentMethod,
+          hint: 'Wait for the Stripe webhook to confirm payment, or pass {"force": true} to override.',
+        },
+      });
+    }
 
     const updateData: Record<string, unknown> = {
       status,
@@ -294,8 +326,15 @@ export async function orderRoutes(app: FastifyInstance) {
     };
     if (notes) updateData.notes = notes;
 
-    // Auto-set payment status for certain statuses
-    if (status === 'confirmed') {
+    // For non-Stripe payment methods (cash, admin-created), auto-mark as paid
+    // when the admin moves the order to a confirmed/fulfilled status. This
+    // preserves the existing COD/admin workflow.
+    if (status === 'confirmed' && !isStripeOrder) {
+      updateData.paymentStatus = 'paid';
+    }
+    // If admin explicitly forced past the unpaid check, also flip paymentStatus
+    // so the order doesn't show as "paid: pending" forever.
+    if (force && existing.paymentStatus !== 'paid' && blockedStatuses.includes(status)) {
       updateData.paymentStatus = 'paid';
     }
 

@@ -99,16 +99,18 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
       }
     }
 
-    // 4. Calculate totals
-    const discountedSubtotal = subtotal - discountAmount;
-    const taxRate = 0.05; // 5% tax
-    const tax = Math.round(discountedSubtotal * taxRate);
-    const deliveryFee = body.fulfillment_type === 'delivery' ? 500 : 0; // $5.00 delivery fee
-    const total = discountedSubtotal + tax + deliveryFee;
-
-    // 5. Get tenant ID
-    const [tenant] = await db.select({ id: tenants.id }).from(tenants).limit(1);
+    // 5. Get tenant (single source of truth for tax rate)
+    const [tenant] = await db
+      .select({ id: tenants.id, taxRate: tenants.taxRate })
+      .from(tenants)
+      .limit(1);
     if (!tenant) return reply.code(500).send({ error: 'No tenant configured' });
+
+    // 4. Calculate totals — all in CENTS, all driven by tenant config
+    const discountedSubtotal = subtotal - discountAmount;
+    const tax = Math.round(discountedSubtotal * tenant.taxRate);
+    const deliveryFee = body.fulfillment_type === 'delivery' ? 599 : 0; // $5.99 — must match frontend default in src/lib/constants.ts
+    const total = discountedSubtotal + tax + deliveryFee;
 
     // 6. Create order
     const orderCode = generateOrderCode();
@@ -166,19 +168,59 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
       return reply.code(500).send({ error: 'Stripe is not configured' });
     }
 
+    // Build Stripe line items: products + (optional) discount-as-negative-line + tax + delivery
+    // Stripe charges the SUM of all line_items, so we must include tax and delivery as
+    // separate line items or they won't be collected. Discount is applied directly to
+    // the product line items by reducing unit_amount proportionally would be lossy with
+    // rounding — easier and exact: pass discount as a separate negative-priced item is
+    // not allowed by Stripe, so instead we apply the discount to the first line item.
+    const stripeLineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = verifiedItems.map((item) => ({
+      price_data: {
+        currency: 'usd',
+        product_data: { name: item.productName },
+        unit_amount: item.unitPrice,
+      },
+      quantity: item.quantity,
+    }));
+
+    // If there's a discount, fold it into the first line item by reducing its unit_amount.
+    // This keeps the math exact and avoids needing Stripe coupons.
+    if (discountAmount > 0 && stripeLineItems.length > 0) {
+      const first = stripeLineItems[0];
+      const firstQty = first.quantity ?? 1;
+      const firstOriginal = (first.price_data!.unit_amount ?? 0) * firstQty;
+      const firstAfter = Math.max(0, firstOriginal - discountAmount);
+      first.price_data!.unit_amount = Math.round(firstAfter / firstQty);
+    }
+
+    if (tax > 0) {
+      stripeLineItems.push({
+        price_data: {
+          currency: 'usd',
+          product_data: { name: 'Sales tax' },
+          unit_amount: tax,
+        },
+        quantity: 1,
+      });
+    }
+
+    if (deliveryFee > 0) {
+      stripeLineItems.push({
+        price_data: {
+          currency: 'usd',
+          product_data: { name: 'Delivery fee' },
+          unit_amount: deliveryFee,
+        },
+        quantity: 1,
+      });
+    }
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       mode: 'payment',
       client_reference_id: order.id,
       metadata: { orderCode: order.orderCode, customerId: customer.id },
-      line_items: verifiedItems.map((item) => ({
-        price_data: {
-          currency: 'usd',
-          product_data: { name: item.productName },
-          unit_amount: item.unitPrice,
-        },
-        quantity: item.quantity,
-      })),
+      line_items: stripeLineItems,
       success_url: `${config.BASE_URL}/checkout/success?order=${order.orderCode}`,
       cancel_url: `${config.BASE_URL}/checkout/cancel?order=${order.orderCode}`,
     });

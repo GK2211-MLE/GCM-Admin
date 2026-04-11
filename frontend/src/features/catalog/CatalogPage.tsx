@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef } from '@tanstack/react-table';
+import { toast } from 'sonner';
 import {
   Plus, Pencil, Trash2, ImageIcon, Grid3X3, List, GripVertical,
 } from 'lucide-react';
@@ -89,6 +90,7 @@ export function CatalogPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.catalog.all });
+      toast.success('Category created');
       closeDialog();
     },
   });
@@ -100,6 +102,7 @@ export function CatalogPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.catalog.all });
+      toast.success('Category updated');
       closeDialog();
     },
   });
@@ -111,6 +114,7 @@ export function CatalogPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.catalog.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+      toast.success('Category deleted');
       setDeleteTarget(null);
     },
   });
@@ -122,6 +126,7 @@ export function CatalogPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.catalog.all });
+      toast.success('Category status updated');
     },
   });
 

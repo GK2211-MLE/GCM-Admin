@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import {
   Save, X, ArrowLeft, Package, Trash2, ImageIcon, Upload,
 } from 'lucide-react';
@@ -178,6 +179,7 @@ export function ProductDetailPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+      toast.success('Product created');
       navigate('/products');
     },
   });
@@ -190,6 +192,7 @@ export function ProductDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.products.detail(id!) });
+      toast.success('Product saved');
       setIsDirty(false);
     },
   });
@@ -200,6 +203,7 @@ export function ProductDetailPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
+      toast.success('Product deleted');
       navigate('/products');
     },
   });

@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef } from '@tanstack/react-table';
+import { toast } from 'sonner';
 import { apiClient } from '@/lib/api-client';
 import { queryKeys } from '@/lib/query-keys';
 import { formatDate } from '@/lib/utils';
@@ -84,15 +85,18 @@ export function PromotionListPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.promotions.list() });
+      toast.success(editTarget ? 'Promotion updated' : 'Promotion created');
       setFormOpen(false);
       setEditTarget(null);
     },
+    // No onError needed — global axios interceptor surfaces the error message.
   });
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => apiClient.delete(`/promotions/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.promotions.list() });
+      toast.success('Promotion deleted');
       setDeleteTarget(null);
     },
   });
@@ -100,8 +104,9 @@ export function PromotionListPage() {
   const toggleMutation = useMutation({
     mutationFn: async ({ id, active }: { id: string; active: boolean }) =>
       apiClient.put(`/promotions/${id}`, { active }),
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.promotions.list() });
+      toast.success(vars.active ? 'Promotion activated' : 'Promotion deactivated');
     },
   });
 
@@ -248,16 +253,24 @@ export function PromotionListPage() {
       />
       <DataTable columns={columns} data={data ?? []} isLoading={isLoading} emptyMessage="No promotions found" />
 
-      {/* Add/Edit Dialog */}
+      {/* Add/Edit Dialog
+       * NOTE: scroll the BODY of the dialog, not the whole DialogContent,
+       * so the footer (with Save button) stays visible at all viewport heights.
+       */}
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
-        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editTarget ? 'Edit Promotion' : 'Add Promotion'}</DialogTitle>
-            <DialogDescription>
-              {editTarget ? 'Update the promotion details.' : 'Create a new promo code for your customers.'}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 mt-4">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col p-0 gap-0">
+          {/* Sticky header */}
+          <div className="px-6 pt-6 pb-4 border-b border-[var(--border)]">
+            <DialogHeader>
+              <DialogTitle>{editTarget ? 'Edit Promotion' : 'Add Promotion'}</DialogTitle>
+              <DialogDescription>
+                {editTarget ? 'Update the promotion details.' : 'Create a new promo code for your customers.'}
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+          {/* Scrollable body */}
+          <div className="flex-1 overflow-y-auto px-6 py-4">
+            <div className="space-y-4">
             <div>
               <label className="mb-1.5 block text-sm font-medium">Code *</label>
               <Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })}
@@ -395,13 +408,17 @@ export function PromotionListPage() {
                 </div>
               )}
             </div>
+            </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setFormOpen(false)}>Cancel</Button>
-            <Button onClick={handleSubmit} disabled={saveMutation.isPending || !form.code.trim()}>
-              {saveMutation.isPending ? 'Saving...' : editTarget ? 'Update' : 'Create'}
-            </Button>
-          </DialogFooter>
+          {/* Sticky footer */}
+          <div className="px-6 py-4 border-t border-[var(--border)] bg-[var(--bg-primary)]">
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setFormOpen(false)}>Cancel</Button>
+              <Button onClick={handleSubmit} disabled={saveMutation.isPending || !form.code.trim()}>
+                {saveMutation.isPending ? 'Saving...' : editTarget ? 'Update' : 'Create'}
+              </Button>
+            </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 

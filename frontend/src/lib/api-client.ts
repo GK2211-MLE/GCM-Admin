@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { toast } from 'sonner';
 
 const TOKEN_KEY = 'f2c_admin_auth_token';
 const REFRESH_KEY = 'f2c_admin_refresh_token';
@@ -11,6 +12,28 @@ export const apiClient = axios.create({
     'Content-Type': 'application/json',
   },
 });
+
+/* Format a Zod-style { details: { field: [msg] } } error into something
+ * a human can read in a toast. Falls back to .error / .message / generic. */
+function formatErrorMessage(error: unknown): string {
+  const e = error as { response?: { data?: { error?: string; message?: string; details?: Record<string, string[] | string> }, status?: number } };
+  const data = e?.response?.data;
+  if (data?.details && typeof data.details === 'object') {
+    const fieldErrors = Object.entries(data.details)
+      .map(([field, msgs]) => {
+        const msg = Array.isArray(msgs) ? msgs[0] : String(msgs);
+        return `${field}: ${msg}`;
+      })
+      .join(' • ');
+    if (fieldErrors) return `${data.error || 'Validation error'} — ${fieldErrors}`;
+  }
+  if (data?.message) return data.message;
+  if (data?.error) return data.error;
+  if (e?.response?.status === 404) return 'Resource not found';
+  if (e?.response?.status === 403) return 'You do not have permission to perform this action';
+  if (e?.response?.status === 500) return 'An unexpected server error occurred';
+  return 'Something went wrong';
+}
 
 // Auth interceptor
 apiClient.interceptors.request.use((config) => {
@@ -50,17 +73,20 @@ apiClient.interceptors.response.use(
       }
     }
 
-    // Friendly error messages
-    const message =
-      error.response?.data?.message ||
-      error.response?.data?.error ||
-      (error.response?.status === 404
-        ? 'Resource not found'
-        : error.response?.status === 403
-          ? 'You do not have permission to perform this action'
-          : error.response?.status === 500
-            ? 'An unexpected server error occurred'
-            : 'Something went wrong');
+    // Build the friendly message (handles Zod validation errors specifically)
+    const message = formatErrorMessage(error);
+
+    // Surface every API error as a toast so the user is never left wondering
+    // what happened. The Promise still rejects so caller .onError handlers
+    // still run if they exist.
+    // Skip toasts on the silent /auth/me probe used by login pages —
+    // they're polling, not user-initiated.
+    const silentPaths = ['/auth/me'];
+    const url = (originalRequest?.url || '').toString();
+    const isSilent = silentPaths.some((p) => url.includes(p));
+    if (!isSilent) {
+      toast.error(message);
+    }
 
     return Promise.reject(new Error(message));
   },

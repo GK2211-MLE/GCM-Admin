@@ -164,73 +164,42 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
       };
     }
 
-    // 9. Create Stripe checkout session
+    // 9. Create a Stripe PaymentIntent (NOT a Checkout Session).
+    // Returning a PaymentIntent client_secret lets the customer site embed
+    // Stripe Elements directly on /checkout instead of redirecting away to
+    // Stripe's hosted page. The amount = the FULL total (subtotal - discount
+    // + tax + delivery) so the customer is charged exactly what the order
+    // summary shows, and Stripe handles refunds at the right amount.
     const stripe = getStripe();
     if (!stripe) {
       return reply.code(500).send({ error: 'Stripe is not configured' });
     }
 
-    // Build Stripe line items: products + (optional) discount-as-negative-line + tax + delivery
-    // Stripe charges the SUM of all line_items, so we must include tax and delivery as
-    // separate line items or they won't be collected. Discount is applied directly to
-    // the product line items by reducing unit_amount proportionally would be lossy with
-    // rounding — easier and exact: pass discount as a separate negative-priced item is
-    // not allowed by Stripe, so instead we apply the discount to the first line item.
-    const stripeLineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = verifiedItems.map((item) => ({
-      price_data: {
-        currency: 'usd',
-        product_data: { name: item.productName },
-        unit_amount: item.unitPrice,
+    // Build a human-readable line-item description for the Stripe dashboard
+    const itemDescription = verifiedItems
+      .map((it) => `${it.quantity}x ${it.productName}`)
+      .join(', ')
+      .slice(0, 500);
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: total,                  // already in cents, includes tax + delivery - discount
+      currency: 'usd',
+      automatic_payment_methods: { enabled: true }, // card + Apple Pay + Google Pay + Link
+      description: `Farm2Cook order ${order.orderCode}`,
+      statement_descriptor_suffix: 'FARM2COOK',
+      metadata: {
+        orderId: order.id,
+        orderCode: order.orderCode,
+        customerId: customer.id,
+        itemDescription,
       },
-      quantity: item.quantity,
-    }));
-
-    // If there's a discount, fold it into the first line item by reducing its unit_amount.
-    // This keeps the math exact and avoids needing Stripe coupons.
-    if (discountAmount > 0 && stripeLineItems.length > 0) {
-      const first = stripeLineItems[0];
-      const firstQty = first.quantity ?? 1;
-      const firstOriginal = (first.price_data!.unit_amount ?? 0) * firstQty;
-      const firstAfter = Math.max(0, firstOriginal - discountAmount);
-      first.price_data!.unit_amount = Math.round(firstAfter / firstQty);
-    }
-
-    if (tax > 0) {
-      stripeLineItems.push({
-        price_data: {
-          currency: 'usd',
-          product_data: { name: 'Sales tax' },
-          unit_amount: tax,
-        },
-        quantity: 1,
-      });
-    }
-
-    if (deliveryFee > 0) {
-      stripeLineItems.push({
-        price_data: {
-          currency: 'usd',
-          product_data: { name: 'Delivery fee' },
-          unit_amount: deliveryFee,
-        },
-        quantity: 1,
-      });
-    }
-
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      mode: 'payment',
-      client_reference_id: order.id,
-      metadata: { orderCode: order.orderCode, customerId: customer.id },
-      line_items: stripeLineItems,
-      success_url: `${config.BASE_URL}/checkout/success?order=${order.orderCode}`,
-      cancel_url: `${config.BASE_URL}/checkout/cancel?order=${order.orderCode}`,
     });
 
-    // Store the Stripe session ID on the order for later confirmation
+    // Store the PaymentIntent id on the order so the webhook can mark
+    // payment as paid by looking it up later.
     await db
       .update(orders)
-      .set({ stripePaymentIntentId: session.id, updatedAt: new Date() })
+      .set({ stripePaymentIntentId: paymentIntent.id, updatedAt: new Date() })
       .where(eq(orders.id, order.id));
 
     return {
@@ -240,7 +209,10 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
         status: order.status,
         total: order.total,
       },
-      checkout_url: session.url,
+      // The customer site checks for clientSecret first and uses it to mount
+      // <Elements> + <PaymentElement>. The old checkout_url field is no longer
+      // returned, so the redirect path is dead.
+      clientSecret: paymentIntent.client_secret,
     };
   });
 

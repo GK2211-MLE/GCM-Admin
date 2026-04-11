@@ -14,9 +14,19 @@ export async function productRoutes(app: FastifyInstance) {
     return { categories: rows.map((r) => r.category) };
   });
 
-  // List all products (public for bot; admin filtered by tenant)
+  // List all products (public for bot; admin filtered by tenant).
+  // Supports an optional `limit` query param so the customer storefront
+  // can ask for just the first N products (e.g. ?limit=6 for the homepage
+  // bestseller carousel) without downloading the entire catalogue.
   app.get('/', async (request) => {
-    const query = request.query as { tenantId?: string; category?: string; active?: string; search?: string };
+    const query = request.query as {
+      tenantId?: string;
+      category?: string;
+      active?: string;
+      search?: string;
+      limit?: string;
+      featured?: string;
+    };
 
     let conditions = [];
     if (query.tenantId) {
@@ -27,6 +37,9 @@ export async function productRoutes(app: FastifyInstance) {
     }
     if (query.active !== undefined) {
       conditions.push(eq(products.active, query.active === 'true'));
+    }
+    if (query.featured !== undefined) {
+      conditions.push(eq(products.featured, query.featured === 'true'));
     }
     if (query.search) {
       const term = `%${query.search}%`;
@@ -39,10 +52,19 @@ export async function productRoutes(app: FastifyInstance) {
       );
     }
 
-    const rows = conditions.length > 0
-      ? await db.select().from(products).where(and(...conditions)).orderBy(asc(products.sortOrder))
-      : await db.select().from(products).orderBy(asc(products.sortOrder));
+    // Parse + clamp the limit. Defaults to no limit (returns all rows).
+    // Cap at 200 to prevent abuse.
+    const parsedLimit = query.limit ? Math.max(1, Math.min(200, parseInt(query.limit, 10))) : null;
 
+    let qb = conditions.length > 0
+      ? db.select().from(products).where(and(...conditions)).orderBy(asc(products.sortOrder)).$dynamic()
+      : db.select().from(products).orderBy(asc(products.sortOrder)).$dynamic();
+
+    if (parsedLimit !== null && !Number.isNaN(parsedLimit)) {
+      qb = qb.limit(parsedLimit);
+    }
+
+    const rows = await qb;
     return { products: rows };
   });
 

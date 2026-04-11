@@ -139,19 +139,50 @@ export function PromotionListPage() {
   }, []);
 
   const handleSubmit = useCallback(() => {
+    // Client-side validation: prevent NaN being JSON-serialized as null
+    // and rejected by the backend Zod schema. Each field gets its own
+    // user-friendly toast.
+    if (!form.code.trim()) {
+      toast.error('Code is required');
+      return;
+    }
+    const rawDiscount = form.discountValue.trim();
+    if (!rawDiscount) {
+      toast.error('Discount value is required');
+      return;
+    }
+    const parsedDiscount = parseFloat(rawDiscount);
+    if (Number.isNaN(parsedDiscount) || parsedDiscount <= 0) {
+      toast.error('Discount value must be a positive number');
+      return;
+    }
+    if (form.discountType === 'percent' && parsedDiscount > 100) {
+      toast.error('Percentage discount cannot exceed 100');
+      return;
+    }
+
     const discountValue = form.discountType === 'fixed'
-      ? Math.round(parseFloat(form.discountValue) * 100)
-      : parseFloat(form.discountValue);
+      ? Math.round(parsedDiscount * 100)
+      : parsedDiscount;
+
+    // Other numeric fields default safely to 0 if blank
+    const parsedMinOrder = parseFloat(form.minOrder || '0');
+    const parsedMaxUses = parseInt(form.maxUses || '0', 10);
+
     saveMutation.mutate({
-      code: form.code.toUpperCase(),
+      code: form.code.toUpperCase().trim(),
       description: form.description,
       discountType: form.discountType,
       discountValue,
-      minOrder: Math.round(parseFloat(form.minOrder || '0') * 100),
-      maxUses: parseInt(form.maxUses || '0'),
+      minOrder: Math.round((Number.isNaN(parsedMinOrder) ? 0 : parsedMinOrder) * 100),
+      maxUses: Number.isNaN(parsedMaxUses) ? 0 : parsedMaxUses,
       active: form.active,
-      startsAt: form.startsAt || new Date().toISOString(),
-      expiresAt: form.expiresAt || '2030-12-31',
+      startsAt: form.startsAt
+        ? new Date(form.startsAt).toISOString()
+        : new Date().toISOString(),
+      expiresAt: form.expiresAt
+        ? new Date(form.expiresAt).toISOString()
+        : new Date('2030-12-31').toISOString(),
       imageUrl: form.imageUrl,
       showAsPopup: form.showAsPopup,
       popupTitle: form.popupTitle,

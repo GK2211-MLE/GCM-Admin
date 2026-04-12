@@ -1,40 +1,38 @@
+import { Resend } from 'resend';
 import nodemailer from 'nodemailer';
-import dns from 'dns';
 import { config } from '../config.js';
 
-let transporter: nodemailer.Transporter | null = null;
+/**
+ * Email transport — uses Resend (HTTP API) when RESEND_API_KEY is set,
+ * falls back to nodemailer SMTP when only SMTP_USER/SMTP_PASS are set.
+ *
+ * Resend is preferred because Render's free-tier Docker containers block
+ * all outbound SMTP ports (25/465/587). Resend uses HTTPS (port 443)
+ * which is always allowed.
+ */
 
+// Resend client (preferred)
+let resend: Resend | null = null;
+function getResend(): Resend | null {
+  if (!(config as any).RESEND_API_KEY) return null;
+  if (!resend) {
+    resend = new Resend((config as any).RESEND_API_KEY);
+  }
+  return resend;
+}
+
+// Nodemailer fallback (for local dev or platforms that allow SMTP)
+let transporter: nodemailer.Transporter | null = null;
 function getTransporter(): nodemailer.Transporter | null {
   if (!config.SMTP_USER || !config.SMTP_PASS) return null;
   if (!transporter) {
-    // Explicitly use smtp.gmail.com over IPv4 (port 465 + TLS). The
-    // `service: 'gmail'` shorthand resolves to an IPv6 address which
-    // Render's free-tier servers can't reach (ENETUNREACH on 2607:f8b0:...).
-    // Forcing `host` + `family: 4` bypasses the IPv6 lookup.
-    // Render's free-tier Docker containers block outbound SMTP over IPv6
-    // (ENETUNREACH) and DNS-based IPv4 connections time out on ports 465
-    // and 587. We use a custom DNS resolver that forces IPv4 lookups so
-    // nodemailer never attempts IPv6. Port 587 + STARTTLS is the standard
-    // Gmail submission port.
     transporter = nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 587,
-      secure: false,
+      service: 'gmail',
       auth: {
         user: config.SMTP_USER,
         pass: config.SMTP_PASS,
       },
-      // Force IPv4 DNS resolution at the socket level
-      dnsLookup: (hostname: string, options: any, callback: any) => {
-        dns.resolve4(hostname, (err: any, addresses: string[]) => {
-          if (err) return callback(err);
-          callback(null, addresses[0], 4);
-        });
-      },
-      connectionTimeout: 15000,
-      greetingTimeout: 15000,
-      socketTimeout: 15000,
-    } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
+    });
   }
   return transporter;
 }
@@ -51,9 +49,38 @@ export async function sendEmail(
   html: string,
   attachments?: Attachment[],
 ): Promise<void> {
+  // Try Resend first (HTTP, works everywhere)
+  const r = getResend();
+  if (r) {
+    try {
+      const fromEmail = config.SMTP_USER || 'onboarding@resend.dev';
+      const { data, error } = await r.emails.send({
+        from: `Farm2Cook <${fromEmail}>`,
+        to: [to],
+        subject,
+        html,
+        attachments: attachments?.map((a) => ({
+          filename: a.filename,
+          content: a.content,
+        })),
+      });
+      if (error) {
+        console.error(`[email/resend] FAILED to=${to} subject="${subject}" error=${JSON.stringify(error)}`);
+        throw new Error(error.message);
+      }
+      console.log(`[email/resend] Sent to=${to} subject="${subject}" id=${data?.id}`);
+      return;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[email/resend] FAILED to=${to} subject="${subject}" error=${msg}`);
+      throw err;
+    }
+  }
+
+  // Fallback to SMTP (works locally, blocked on Render free tier)
   const t = getTransporter();
   if (!t) {
-    console.warn('[email] SMTP not configured. Email not sent:', { to, subject });
+    console.warn('[email] Neither RESEND_API_KEY nor SMTP_USER/SMTP_PASS configured. Email not sent:', { to, subject });
     return;
   }
 
@@ -65,10 +92,10 @@ export async function sendEmail(
       html,
       attachments,
     });
-    console.log(`[email] Sent to=${to} subject="${subject}" messageId=${info.messageId}`);
+    console.log(`[email/smtp] Sent to=${to} subject="${subject}" messageId=${info.messageId}`);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[email] FAILED to=${to} subject="${subject}" error=${msg}`);
-    throw err; // re-throw so callers can handle/log
+    console.error(`[email/smtp] FAILED to=${to} subject="${subject}" error=${msg}`);
+    throw err;
   }
 }

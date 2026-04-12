@@ -24,6 +24,9 @@ const envSchema = z.object({
   VAPID_PUBLIC_KEY: z.string().default(''),
   VAPID_PRIVATE_KEY: z.string().default(''),
   ADMIN_ORIGIN: z.string().default('http://localhost:5173'),
+  // Resend HTTP email API (preferred over SMTP for cloud hosts that block
+  // outbound SMTP ports). Sign up at resend.com, get an API key, set here.
+  RESEND_API_KEY: z.string().default(''),
   // Google OAuth (customer site only — leave empty to disable)
   GOOGLE_CLIENT_ID: z.string().default(''),
   GOOGLE_CLIENT_SECRET: z.string().default(''),

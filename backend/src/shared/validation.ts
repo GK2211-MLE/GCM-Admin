@@ -47,6 +47,7 @@ export const orderFilterSchema = z.object({
   locationId: z.string().uuid().optional(),
   paymentMethod: paymentMethodSchema.optional(),
   deliveryMethod: deliveryMethodSchema.optional(),
+  source: z.string().optional(), // 'web' | 'app' | 'whatsapp' etc
   search: z.string().optional(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),

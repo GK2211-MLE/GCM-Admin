@@ -36,6 +36,7 @@ const STATUS_TABS: { value: string; label: string }[] = [
 
 const CHANNEL_OPTIONS = [
   { value: 'all', label: 'All Channels' },
+  { value: 'web', label: 'Website' },
   { value: 'whatsapp', label: 'WhatsApp' },
   { value: 'app', label: 'App' },
 ];
@@ -200,10 +201,10 @@ export function OrderListPage() {
         id: 'channel',
         header: 'Channel',
         cell: ({ row }) => {
-          const source = row.original.source ?? 'app';
-          const label = source === 'whatsapp' ? 'WhatsApp' : 'App';
-          const variant = source === 'whatsapp' ? 'success' : 'default';
-          return <Badge variant={variant as 'success' | 'default'}>{label}</Badge>;
+          const source = String(row.original.source ?? 'app');
+          const label = source === 'whatsapp' ? 'WhatsApp' : source === 'web' ? 'Website' : 'App';
+          const variant = source === 'whatsapp' ? 'success' : source === 'web' ? 'info' : 'default';
+          return <Badge variant={variant as 'success' | 'info' | 'default'}>{label}</Badge>;
         },
       },
       {

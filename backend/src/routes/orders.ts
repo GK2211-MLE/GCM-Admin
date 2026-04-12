@@ -36,6 +36,7 @@ export async function orderRoutes(app: FastifyInstance) {
     }
     if (filters.paymentMethod) conditions.push(eq(orders.paymentMethod, filters.paymentMethod));
     if (filters.deliveryMethod) conditions.push(eq(orders.deliveryMethod, filters.deliveryMethod));
+    if (filters.source) conditions.push(eq(orders.source, filters.source));
     if (filters.dateFrom) conditions.push(gte(orders.createdAt, new Date(filters.dateFrom)));
     if (filters.dateTo) conditions.push(lte(orders.createdAt, new Date(filters.dateTo)));
     if (filters.search) {

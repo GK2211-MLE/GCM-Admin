@@ -10,16 +10,19 @@ function getTransporter(): nodemailer.Transporter | null {
     // `service: 'gmail'` shorthand resolves to an IPv6 address which
     // Render's free-tier servers can't reach (ENETUNREACH on 2607:f8b0:...).
     // Forcing `host` + `family: 4` bypasses the IPv6 lookup.
+    // Force IPv4 — Render can't reach Gmail SMTP over IPv6 (ENETUNREACH).
+    // Cast to `any` because @types/nodemailer's overloads don't expose `family`
+    // on the object-literal form, even though nodemailer itself supports it.
     transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 465,
       secure: true,
-      family: 4, // Force IPv4
+      family: 4,
       auth: {
         user: config.SMTP_USER,
         pass: config.SMTP_PASS,
       },
-    });
+    } as any); // eslint-disable-line @typescript-eslint/no-explicit-any
   }
   return transporter;
 }

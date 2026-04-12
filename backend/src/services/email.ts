@@ -10,13 +10,14 @@ function getTransporter(): nodemailer.Transporter | null {
     // `service: 'gmail'` shorthand resolves to an IPv6 address which
     // Render's free-tier servers can't reach (ENETUNREACH on 2607:f8b0:...).
     // Forcing `host` + `family: 4` bypasses the IPv6 lookup.
-    // Force IPv4 — Render can't reach Gmail SMTP over IPv6 (ENETUNREACH).
-    // Cast to `any` because @types/nodemailer's overloads don't expose `family`
-    // on the object-literal form, even though nodemailer itself supports it.
+    // Force IPv4 + port 587 (STARTTLS). Render free-tier can't reach
+    // Gmail SMTP over IPv6 (ENETUNREACH) and port 465 times out behind
+    // their firewall. Port 587 with STARTTLS is the standard submission
+    // port and passes through most cloud network restrictions.
     transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
-      port: 465,
-      secure: true,
+      port: 587,
+      secure: false, // STARTTLS upgrades after connect
       family: 4,
       auth: {
         user: config.SMTP_USER,

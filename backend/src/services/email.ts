@@ -6,8 +6,15 @@ let transporter: nodemailer.Transporter | null = null;
 function getTransporter(): nodemailer.Transporter | null {
   if (!config.SMTP_USER || !config.SMTP_PASS) return null;
   if (!transporter) {
+    // Explicitly use smtp.gmail.com over IPv4 (port 465 + TLS). The
+    // `service: 'gmail'` shorthand resolves to an IPv6 address which
+    // Render's free-tier servers can't reach (ENETUNREACH on 2607:f8b0:...).
+    // Forcing `host` + `family: 4` bypasses the IPv6 lookup.
     transporter = nodemailer.createTransport({
-      service: 'gmail',
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      family: 4, // Force IPv4
       auth: {
         user: config.SMTP_USER,
         pass: config.SMTP_PASS,

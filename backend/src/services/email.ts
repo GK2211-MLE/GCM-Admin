@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import dns from 'dns';
 import { config } from '../config.js';
 
 let transporter: nodemailer.Transporter | null = null;
@@ -15,7 +16,6 @@ function getTransporter(): nodemailer.Transporter | null {
     // and 587. We use a custom DNS resolver that forces IPv4 lookups so
     // nodemailer never attempts IPv6. Port 587 + STARTTLS is the standard
     // Gmail submission port.
-    const dns = require('dns');
     transporter = nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 587,

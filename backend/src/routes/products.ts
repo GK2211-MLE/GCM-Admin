@@ -1,8 +1,8 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { eq, and, asc, ilike, or, sql, inArray, isNull, notExists } from 'drizzle-orm';
+import { eq, and, asc, desc, ilike, or, sql, inArray, isNull, notExists } from 'drizzle-orm';
 import jwt from 'jsonwebtoken';
 import { db } from '../db/client.js';
-import { products, categories, productLocations, locations } from '../db/schema.js';
+import { products, categories, productLocations, locations, orders, orderItems } from '../db/schema.js';
 import { authGuard, getLocationScope } from '../middleware/auth.js';
 import { getTenantId } from '../middleware/tenant.js';
 import { config } from '../config.js';
@@ -65,6 +65,84 @@ export async function productRoutes(app: FastifyInstance) {
       .groupBy(products.category)
       .orderBy(asc(products.category));
     return { categories: rows.map((r) => r.category) };
+  });
+
+  // ── Local Favourites ───────────────────────────────────────────
+  // PUBLIC endpoint for the customer homepage "Local Favourites" section.
+  //
+  // Logic (two-phase):
+  //   Phase 2 (data-driven): When `?locationId=X` is passed AND that
+  //     location has enough orders, return the top-ordered products at
+  //     that location sorted by total quantity sold. This makes the
+  //     section genuinely "local" — a Plano customer sees what Plano
+  //     actually buys most.
+  //   Phase 1 (curated fallback): When there aren't enough location-
+  //     specific orders (< 3 distinct products sold), return products
+  //     NOT in the top-6 bestsellers so the section surfaces items that
+  //     would otherwise get buried. Sorted by sortOrder to let admin
+  //     control the curation.
+  //
+  // Returns up to `?limit=N` products (default 8).
+  app.get('/local-favourites', async (request) => {
+    const query = request.query as { locationId?: string; limit?: string; excludeIds?: string };
+    const limit = Math.max(1, Math.min(20, parseInt(query.limit || '8', 10)));
+    const locationId = query.locationId || null;
+    // Exclude product IDs already shown in the bestsellers section
+    const excludeIds = query.excludeIds
+      ? query.excludeIds.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+
+    // Phase 2: try location-based top sellers
+    if (locationId) {
+      const topAtLocation = await db
+        .select({
+          productId: orderItems.productId,
+          totalQty: sql<number>`coalesce(sum(${orderItems.quantity}), 0)::int`,
+        })
+        .from(orderItems)
+        .innerJoin(orders, eq(orderItems.orderId, orders.id))
+        .where(eq(orders.locationId, locationId))
+        .groupBy(orderItems.productId)
+        .orderBy(desc(sql`sum(${orderItems.quantity})`))
+        .limit(limit + excludeIds.length + 5); // fetch extra to compensate for exclusions
+
+      const topProductIds = topAtLocation
+        .map((r) => r.productId)
+        .filter((id) => !excludeIds.includes(id))
+        .slice(0, limit);
+
+      if (topProductIds.length >= 3) {
+        // Enough data — fetch full product rows in the ranked order
+        const rows = await db
+          .select()
+          .from(products)
+          .where(
+            and(
+              inArray(products.id, topProductIds),
+              eq(products.active, true),
+            ),
+          );
+        // Re-sort to match the ranked order from the aggregation
+        const byId = new Map(rows.map((r) => [r.id, r]));
+        const sorted = topProductIds.map((id) => byId.get(id)).filter(Boolean);
+        return { products: sorted, source: 'location' };
+      }
+    }
+
+    // Phase 1: curated fallback — products NOT in the bestsellers
+    const conditions: ReturnType<typeof eq>[] = [eq(products.active, true)];
+    if (excludeIds.length > 0) {
+      conditions.push(sql`${products.id} NOT IN (${sql.join(excludeIds.map((id) => sql`${id}`), sql`, `)})`);
+    }
+
+    const rows = await db
+      .select()
+      .from(products)
+      .where(and(...conditions))
+      .orderBy(asc(products.sortOrder), desc(products.createdAt))
+      .limit(limit);
+
+    return { products: rows, source: 'curated' };
   });
 
   // List products. PUBLIC endpoint — used by both the admin frontend AND the

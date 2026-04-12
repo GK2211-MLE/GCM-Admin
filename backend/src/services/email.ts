@@ -31,15 +31,22 @@ export async function sendEmail(
 ): Promise<void> {
   const t = getTransporter();
   if (!t) {
-    console.warn('SMTP not configured. Email not sent:', { to, subject });
+    console.warn('[email] SMTP not configured. Email not sent:', { to, subject });
     return;
   }
 
-  await t.sendMail({
-    from: `"Farm2Cook" <${config.SMTP_USER}>`,
-    to,
-    subject,
-    html,
-    attachments,
-  });
+  try {
+    const info = await t.sendMail({
+      from: `"Farm2Cook" <${config.SMTP_USER}>`,
+      to,
+      subject,
+      html,
+      attachments,
+    });
+    console.log(`[email] Sent to=${to} subject="${subject}" messageId=${info.messageId}`);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[email] FAILED to=${to} subject="${subject}" error=${msg}`);
+    throw err; // re-throw so callers can handle/log
+  }
 }

@@ -14,8 +14,10 @@ export async function emailRoutes(app: FastifyInstance) {
     try {
       await sendEmail(to, subject, html);
       return { success: true };
-    } catch (err) {
-      return reply.code(500).send({ error: 'Failed to send email' });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[email/send] SMTP error:', message);
+      return reply.code(500).send({ error: 'Failed to send email', detail: message });
     }
   });
 

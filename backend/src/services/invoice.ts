@@ -1,6 +1,7 @@
 import puppeteer from 'puppeteer';
 import { formatCents } from '../shared/index.js';
 import { sendEmail } from './email.js';
+import { brandedEmail } from './email-templates.js';
 
 interface InvoiceItem {
   productName: string;
@@ -188,92 +189,49 @@ function buildEmailBody(
 
   const itemList = items
     .map((i) => `<tr>
-      <td style="padding:8px 12px;border-bottom:1px solid #f3f4f6;font-size:14px;color:#374151;">${i.productName}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #f3f4f6;font-size:14px;color:#6b7280;text-align:center;">x${i.quantity}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #f3f4f6;font-size:14px;color:#374151;text-align:right;font-weight:600;">${formatCents(i.total)}</td>
+      <td style="padding:10px 0;border-bottom:1px solid #f3f4f6;font-size:14px;font-weight:600;color:#1a1a1a;">${i.productName}</td>
+      <td style="padding:10px 0;border-bottom:1px solid #f3f4f6;font-size:13px;color:#6b7280;text-align:center;">&times;${i.quantity}</td>
+      <td style="padding:10px 0;border-bottom:1px solid #f3f4f6;font-size:14px;font-weight:600;color:#1a1a1a;text-align:right;">${formatCents(i.total)}</td>
     </tr>`)
     .join('');
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
-<body style="margin:0;padding:0;background:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
-  <div style="max-width:600px;margin:32px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
-
-    <!-- Header -->
-    <div style="background:#16a34a;padding:32px 40px;">
-      <div style="font-size:24px;font-weight:700;color:#fff;letter-spacing:-0.5px;">Farm2Cook</div>
-      <div style="font-size:13px;color:#bbf7d0;margin-top:4px;">Fresh from farm to your kitchen</div>
-    </div>
-
-    <!-- Body -->
-    <div style="padding:32px 40px;">
-      <h2 style="margin:0 0 8px;font-size:20px;color:#111827;">Your invoice is ready, ${firstName}! 🎉</h2>
-      <p style="margin:0 0 24px;font-size:15px;color:#6b7280;line-height:1.6;">
-        Thank you for your order. Please find your invoice attached as a PDF. Here's a quick summary of what you ordered.
+  return brandedEmail({
+    preheader: `Your invoice ${invoiceNumber} is attached — ${formatCents(order.total)} total.`,
+    headline: `Your invoice is ready, ${firstName}!`,
+    body: `
+      <p style="margin:0 0 20px;font-size:15px;color:#6b7280;line-height:1.7;">
+        Thank you for your order. Your invoice is attached as a PDF. Here's a quick summary.
       </p>
 
-      <!-- Order meta -->
-      <div style="background:#f9fafb;border-radius:8px;padding:16px 20px;margin-bottom:24px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;">
-        <div>
-          <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#9ca3af;font-weight:600;">Invoice</div>
-          <div style="font-size:15px;font-weight:700;color:#111827;margin-top:2px;">${invoiceNumber}</div>
-        </div>
-        <div>
-          <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#9ca3af;font-weight:600;">Order</div>
-          <div style="font-size:15px;font-weight:700;color:#111827;margin-top:2px;">${order.orderCode}</div>
-        </div>
-        <div>
-          <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#9ca3af;font-weight:600;">Date</div>
-          <div style="font-size:15px;font-weight:700;color:#111827;margin-top:2px;">${invoiceDate}</div>
-        </div>
-        <div>
-          <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#9ca3af;font-weight:600;">Total Paid</div>
-          <div style="font-size:15px;font-weight:700;color:#16a34a;margin-top:2px;">${formatCents(order.total)}</div>
-        </div>
+      <div style="background:#fdfaf5;border:1px solid #e8e0d0;border-radius:12px;padding:16px 20px;margin:0 0 24px;">
+        <table style="width:100%;" cellpadding="0" cellspacing="0"><tr>
+          <td style="padding:4px 0;"><span style="font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.1em;">Invoice</span><br/><span style="font-size:15px;font-weight:800;color:#1a1a1a;">${invoiceNumber}</span></td>
+          <td style="padding:4px 0;"><span style="font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.1em;">Date</span><br/><span style="font-size:14px;font-weight:600;color:#1a1a1a;">${invoiceDate}</span></td>
+          <td style="padding:4px 0;"><span style="font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.1em;">Total</span><br/><span style="font-size:15px;font-weight:800;color:#cc2b2b;">${formatCents(order.total)}</span></td>
+        </tr></table>
       </div>
 
-      <!-- Items -->
-      <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
-        <thead>
-          <tr style="background:#f9fafb;">
-            <th style="padding:8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#9ca3af;font-weight:600;text-align:left;border-bottom:2px solid #e5e7eb;">Item</th>
-            <th style="padding:8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#9ca3af;font-weight:600;text-align:center;border-bottom:2px solid #e5e7eb;">Qty</th>
-            <th style="padding:8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em;color:#9ca3af;font-weight:600;text-align:right;border-bottom:2px solid #e5e7eb;">Amount</th>
-          </tr>
-        </thead>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+        <thead><tr>
+          <th style="padding:8px 0;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#6b7280;font-weight:700;text-align:left;border-bottom:2px solid #e8e0d0;">Item</th>
+          <th style="padding:8px 0;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#6b7280;font-weight:700;text-align:center;border-bottom:2px solid #e8e0d0;">Qty</th>
+          <th style="padding:8px 0;font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:#6b7280;font-weight:700;text-align:right;border-bottom:2px solid #e8e0d0;">Amount</th>
+        </tr></thead>
         <tbody>${itemList}</tbody>
         <tfoot>
-          ${order.deliveryFee > 0 ? `<tr><td colspan="2" style="padding:6px 12px;font-size:13px;color:#6b7280;text-align:right;">Delivery Fee</td><td style="padding:6px 12px;font-size:13px;color:#374151;text-align:right;">${formatCents(order.deliveryFee)}</td></tr>` : ''}
-          <tr><td colspan="2" style="padding:6px 12px;font-size:13px;color:#6b7280;text-align:right;">Tax</td><td style="padding:6px 12px;font-size:13px;color:#374151;text-align:right;">${formatCents(order.tax)}</td></tr>
-          <tr style="border-top:2px solid #e5e7eb;"><td colspan="2" style="padding:10px 12px;font-size:15px;font-weight:700;color:#111827;text-align:right;">Total</td><td style="padding:10px 12px;font-size:15px;font-weight:700;color:#16a34a;text-align:right;">${formatCents(order.total)}</td></tr>
+          ${order.deliveryFee > 0 ? `<tr><td colspan="2" style="padding:4px 0;font-size:13px;color:#6b7280;text-align:right;">Delivery</td><td style="padding:4px 0;font-size:13px;color:#1a1a1a;text-align:right;">${formatCents(order.deliveryFee)}</td></tr>` : ''}
+          <tr><td colspan="2" style="padding:4px 0;font-size:13px;color:#6b7280;text-align:right;">Tax</td><td style="padding:4px 0;font-size:13px;color:#1a1a1a;text-align:right;">${formatCents(order.tax)}</td></tr>
+          <tr><td colspan="2" style="padding:10px 0 0;font-size:16px;font-weight:800;color:#1a1a1a;text-align:right;border-top:2px solid #1a1a1a;">Total</td><td style="padding:10px 0 0;font-size:16px;font-weight:800;color:#cc2b2b;text-align:right;border-top:2px solid #1a1a1a;">${formatCents(order.total)}</td></tr>
         </tfoot>
       </table>
 
-      <!-- Reorder CTA -->
-      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:20px 24px;margin-bottom:24px;">
-        <p style="margin:0 0 4px;font-size:15px;font-weight:600;color:#15803d;">Loved your order? Order again! 🛒</p>
-        <p style="margin:0;font-size:14px;color:#4ade80;color:#166534;line-height:1.5;">
-          Open the Farm2Cook app to reorder your favourite items with just a tap. Fresh farm produce delivered straight to you.
-        </p>
-      </div>
-
-      <!-- Support note -->
       <p style="margin:0;font-size:13px;color:#9ca3af;line-height:1.6;">
-        Questions about your order? Reply to this email or contact us — we're happy to help.
-        Please keep the attached PDF for your records.
+        Questions? Reply to this email — we're happy to help. Please keep the attached PDF for your records.
       </p>
-    </div>
-
-    <!-- Footer -->
-    <div style="background:#f9fafb;border-top:1px solid #e5e7eb;padding:20px 40px;text-align:center;">
-      <p style="margin:0;font-size:12px;color:#9ca3af;">© ${new Date().getFullYear()} Farm2Cook. All rights reserved.</p>
-      <p style="margin:4px 0 0;font-size:12px;color:#9ca3af;">Fresh from farm to your kitchen.</p>
-    </div>
-
-  </div>
-</body>
-</html>`;
+    `,
+    ctaLabel: 'View Your Orders',
+    ctaUrl: 'https://customer-akxe.onrender.com/account/orders',
+  });
 }
 
 export async function sendInvoiceEmail(

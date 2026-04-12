@@ -14,6 +14,8 @@ import { eq, and } from 'drizzle-orm';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import { sendEmail } from '../../services/email.js';
+import { welcomeEmail } from '../../services/email-templates.js';
 
 async function getDefaultTenantId(): Promise<string> {
   const [tenant] = await db.select({ id: tenants.id }).from(tenants).limit(1);
@@ -68,6 +70,13 @@ export async function customerAuthRoutes(app: FastifyInstance) {
       .update(appUsers)
       .set({ refreshToken, updatedAt: new Date() })
       .where(eq(appUsers.id, user.id));
+
+    // Fire-and-forget welcome email — don't block the signup response.
+    sendEmail(
+      email,
+      `Welcome to Farm2Cook, ${name.split(' ')[0]}!`,
+      welcomeEmail(name, config.CUSTOMER_FRONTEND_URL),
+    ).catch((err) => console.error('[signup] welcome email failed:', err));
 
     return {
       accessToken,
@@ -441,6 +450,13 @@ export async function customerAuthRoutes(app: FastifyInstance) {
           role: 'customer',
         })
         .returning();
+
+      // Welcome email for new Google users (fire-and-forget)
+      sendEmail(
+        email,
+        `Welcome to Farm2Cook, ${displayName.split(' ')[0]}!`,
+        welcomeEmail(displayName, config.CUSTOMER_FRONTEND_URL),
+      ).catch((err) => console.error('[google-signup] welcome email failed:', err));
     }
 
     // Issue our own JWTs (same shape as /login and /signup return)

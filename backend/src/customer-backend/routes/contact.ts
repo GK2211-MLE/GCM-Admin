@@ -3,6 +3,9 @@ import { eq, and } from 'drizzle-orm';
 import { db } from '../../db/client.js';
 import { contactMessages, newsletterSubs, tenants } from '../../db/schema.js';
 import { contactSchema, newsletterSchema } from '../validation/schemas.js';
+import { config } from '../../config.js';
+import { sendEmail } from '../../services/email.js';
+import { newsletterWelcomeEmail } from '../../services/email-templates.js';
 
 export async function contactRoutes(app: FastifyInstance) {
   // Submit contact form
@@ -58,6 +61,13 @@ export async function contactRoutes(app: FastifyInstance) {
         tenantId: tenant.id,
         email: data.email,
       });
+
+    // Send newsletter welcome email (fire-and-forget)
+    sendEmail(
+      data.email,
+      `You're in! Welcome to Farm2Cook`,
+      newsletterWelcomeEmail(data.email, config.CUSTOMER_FRONTEND_URL),
+    ).catch((err) => console.error('[newsletter] welcome email failed:', err));
 
     return { success: true, message: 'Subscribed successfully' };
   });

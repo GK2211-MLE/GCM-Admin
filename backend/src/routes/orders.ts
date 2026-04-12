@@ -12,6 +12,9 @@ import {
 } from '../shared/index.js';
 import { broadcastSSE } from './sse.js';
 import { createNotification } from '../services/notification.js';
+import { sendEmail } from '../services/email.js';
+import { orderStatusEmail } from '../services/email-templates.js';
+import { config } from '../config.js';
 
 export async function orderRoutes(app: FastifyInstance) {
   // List orders with filters
@@ -402,6 +405,29 @@ export async function orderRoutes(app: FastifyInstance) {
       `/orders/${order.id}`,
       order.locationId,
     ).catch(console.error);
+
+    // Email the customer about the status change (fire-and-forget).
+    // Look up their email from the linked appUser or customer row.
+    (async () => {
+      let email: string | null = null;
+      let customerName = 'Customer';
+      if (order.appUserId) {
+        const [u] = await db.select({ email: appUsers.email, name: appUsers.name })
+          .from(appUsers).where(eq(appUsers.id, order.appUserId)).limit(1);
+        if (u) { email = u.email; customerName = u.name; }
+      } else if (order.customerId) {
+        const [c] = await db.select({ email: customers.email, name: customers.name })
+          .from(customers).where(eq(customers.id, order.customerId)).limit(1);
+        if (c?.email) { email = c.email; customerName = c.name ?? 'Customer'; }
+      }
+      if (email) {
+        await sendEmail(
+          email,
+          `Your order ${order.orderCode} — ${status.replace(/_/g, ' ')}`,
+          orderStatusEmail(customerName, order.orderCode, status, config.CUSTOMER_FRONTEND_URL),
+        );
+      }
+    })().catch((err) => console.error('[orders] status email failed:', err));
 
     return { order };
   });

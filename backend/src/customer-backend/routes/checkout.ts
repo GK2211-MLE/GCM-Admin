@@ -2,10 +2,12 @@ import type { FastifyInstance } from 'fastify';
 import { eq, and } from 'drizzle-orm';
 import Stripe from 'stripe';
 import { db } from '../../db/client.js';
-import { orders, orderItems, products, productLocations, promotions, tenants } from '../../db/schema.js';
+import { orders, orderItems, products, productLocations, promotions, tenants, appUsers } from '../../db/schema.js';
 import { config } from '../../config.js';
 import { customerAuthGuard } from '../middleware/auth.js';
 import { checkoutSchema, confirmPaymentSchema } from '../validation/schemas.js';
+import { sendEmail } from '../../services/email.js';
+import { orderConfirmationEmail } from '../../services/email-templates.js';
 
 function generateOrderCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -193,6 +195,40 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
         })),
       );
     }
+
+    // Resolve customer name for the email (JWT only has email, not name).
+    const [customerRow] = await db
+      .select({ name: appUsers.name })
+      .from(appUsers)
+      .where(eq(appUsers.id, customer.id))
+      .limit(1);
+    const customerName = customerRow?.name || customer.email.split('@')[0];
+
+    // Send order confirmation email (fire-and-forget, both bypass and Stripe paths)
+    sendEmail(
+      customer.email,
+      `Order ${order.orderCode} Confirmed — Farm2Cook`,
+      orderConfirmationEmail(
+        customerName,
+        {
+          orderCode: order.orderCode,
+          items: verifiedItems.map((it) => ({
+            productName: it.productName,
+            quantity: it.quantity,
+            unitPrice: it.unitPrice,
+            total: it.total,
+          })),
+          subtotal: discountedSubtotal,
+          tax,
+          deliveryFee,
+          total,
+          deliveryMethod: body.fulfillment_type,
+          paymentMethod: skipPayment ? 'test_bypass' : 'stripe',
+          createdAt: order.createdAt,
+        },
+        config.CUSTOMER_FRONTEND_URL,
+      ),
+    ).catch((err) => console.error('[checkout] order email failed:', err));
 
     // 8. Bypass path — return the order without a clientSecret. The
     // customer site sees no clientSecret and no checkout_url, so it

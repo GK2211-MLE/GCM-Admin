@@ -460,6 +460,18 @@ DO $$ BEGIN
   ALTER TABLE notifications ADD COLUMN location_id UUID REFERENCES locations(id);
 EXCEPTION WHEN duplicate_column THEN NULL;
 END $$;
+
+-- store_inventory: per-location stock tracking
+CREATE TABLE IF NOT EXISTS store_inventory (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  stock_quantity INTEGER NOT NULL DEFAULT 0,
+  low_stock_threshold INTEGER NOT NULL DEFAULT 10,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS store_inventory_loc_product_idx
+  ON store_inventory(location_id, product_id);
 `;
 
 async function migrate() {

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, and, asc, desc, ilike, or, sql, lte, gt } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { products, storeInventory } from '../db/schema.js';
+import { products, storeInventory, productLocations } from '../db/schema.js';
 import { authGuard, getLocationScope } from '../middleware/auth.js';
 import { getTenantId } from '../middleware/tenant.js';
 import {
@@ -26,9 +26,17 @@ export async function inventoryRoutes(app: FastifyInstance) {
 
     // ── Per-store inventory mode ──
     if (locationId) {
+      // Product visibility: only show products tagged to this location OR
+      // products with no location tags (catalog-wide).
+      const visibilityFilter = sql`(
+        NOT EXISTS (SELECT 1 FROM product_locations pl WHERE pl.product_id = ${products.id})
+        OR EXISTS (SELECT 1 FROM product_locations pl WHERE pl.product_id = ${products.id} AND pl.location_id = ${locationId})
+      )`;
+
       const conditions = [
         eq(products.tenantId, tenantId),
         eq(storeInventory.locationId, locationId),
+        visibilityFilter,
       ];
 
       if (filters.search) {
@@ -80,8 +88,15 @@ export async function inventoryRoutes(app: FastifyInstance) {
         .innerJoin(products, eq(storeInventory.productId, products.id))
         .where(where);
 
-      // Summary for this store
-      const storeCondition = and(eq(storeInventory.locationId, locationId), eq(products.tenantId, tenantId));
+      // Summary for this store (also filtered by product_locations visibility)
+      const storeCondition = and(
+        eq(storeInventory.locationId, locationId),
+        eq(products.tenantId, tenantId),
+        sql`(
+          NOT EXISTS (SELECT 1 FROM product_locations pl WHERE pl.product_id = ${products.id})
+          OR EXISTS (SELECT 1 FROM product_locations pl WHERE pl.product_id = ${products.id} AND pl.location_id = ${locationId})
+        )`,
+      );
       const [summaryRow] = await db
         .select({
           totalProducts: sql<number>`count(*)::int`,
@@ -170,7 +185,14 @@ export async function inventoryRoutes(app: FastifyInstance) {
         })
         .from(storeInventory)
         .innerJoin(products, eq(storeInventory.productId, products.id))
-        .where(and(eq(products.tenantId, tenantId), eq(storeInventory.locationId, scope)));
+        .where(and(
+          eq(products.tenantId, tenantId),
+          eq(storeInventory.locationId, scope),
+          sql`(
+            NOT EXISTS (SELECT 1 FROM product_locations pl WHERE pl.product_id = ${products.id})
+            OR EXISTS (SELECT 1 FROM product_locations pl WHERE pl.product_id = ${products.id} AND pl.location_id = ${scope})
+          )`,
+        ));
       return stats;
     }
 

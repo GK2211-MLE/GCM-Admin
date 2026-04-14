@@ -31,11 +31,14 @@ export async function settingsRoutes(app: FastifyInstance) {
       ?? (legacy.freeDeliveryThreshold as number | undefined);
     const minOrderCents = (cfg.minOrderAmount as number | undefined) ?? 0;
 
+    // IMPORTANT: use `=== undefined` not truthy — admin may legitimately
+    // set these to 0 (free delivery, no minimum, no tax), and that zero
+    // must reach the customer site, not be overridden by a hardcoded fallback.
     return {
       taxRate: tenant.taxRate,
       // Convert cents → dollars for the frontend
-      deliveryFee: deliveryFeeCents ? deliveryFeeCents / 100 : 5.99,
-      freeDeliveryThreshold: thresholdCents ? thresholdCents / 100 : 75,
+      deliveryFee: deliveryFeeCents !== undefined ? deliveryFeeCents / 100 : 0,
+      freeDeliveryThreshold: thresholdCents !== undefined ? thresholdCents / 100 : 0,
       minOrderAmount: minOrderCents / 100,
       // Fulfillment toggles
       pickupEnabled: (cfg.pickupEnabled as boolean | undefined) ?? true,

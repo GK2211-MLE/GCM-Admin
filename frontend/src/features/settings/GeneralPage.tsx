@@ -126,10 +126,11 @@ export function GeneralPage() {
   const [currency, setCurrency] = useState('USD');
   const [timezone, setTimezone] = useState('America/Chicago');
 
-  // -- Order Settings state --
-  const [minOrderAmount, setMinOrderAmount] = useState('0');
-  const [freeDeliveryThreshold, setFreeDeliveryThreshold] = useState('10000');
-  const [defaultDeliveryFee, setDefaultDeliveryFee] = useState('999');
+  // -- Order Settings state (stored in dollars for the UI; converted to
+  // cents on save and back to dollars on load) --
+  const [minOrderAmount, setMinOrderAmount] = useState('0.00');
+  const [freeDeliveryThreshold, setFreeDeliveryThreshold] = useState('100.00');
+  const [defaultDeliveryFee, setDefaultDeliveryFee] = useState('9.99');
 
   // -- Tax Settings state --
   const [taxRate, setTaxRate] = useState('0');
@@ -170,9 +171,12 @@ export function GeneralPage() {
 
     setContactEmail(config.contactEmail);
     setContactPhone(config.contactPhone);
-    setMinOrderAmount(String(config.minOrderAmount));
-    setFreeDeliveryThreshold(String(config.freeDeliveryThreshold));
-    setDefaultDeliveryFee(String(config.defaultDeliveryFee));
+    // Money fields are stored in cents in the backend (customer endpoint
+    // divides by 100 on read). Display as dollars in the admin UI so the
+    // "($)" label matches what the admin actually types.
+    setMinOrderAmount((config.minOrderAmount / 100).toFixed(2));
+    setFreeDeliveryThreshold((config.freeDeliveryThreshold / 100).toFixed(2));
+    setDefaultDeliveryFee((config.defaultDeliveryFee / 100).toFixed(2));
     setTaxLabel(config.taxLabel);
     setTaxRegistrationNumber(config.taxRegistrationNumber);
     setTaxInclusivePricing(config.taxInclusivePricing);
@@ -197,9 +201,11 @@ export function GeneralPage() {
     return {
       contactEmail,
       contactPhone,
-      minOrderAmount: parseFloat(minOrderAmount) || 0,
-      freeDeliveryThreshold: parseFloat(freeDeliveryThreshold) || 0,
-      defaultDeliveryFee: parseFloat(defaultDeliveryFee) || 0,
+      // Admin types in dollars; backend stores cents. Round to avoid
+      // floating-point crumbs (e.g. 5.99 → 599, not 598.9999).
+      minOrderAmount: Math.round((parseFloat(minOrderAmount) || 0) * 100),
+      freeDeliveryThreshold: Math.round((parseFloat(freeDeliveryThreshold) || 0) * 100),
+      defaultDeliveryFee: Math.round((parseFloat(defaultDeliveryFee) || 0) * 100),
       taxLabel,
       taxRegistrationNumber,
       taxInclusivePricing,
@@ -343,9 +349,10 @@ export function GeneralPage() {
                 <Input
                   type="number"
                   min="0"
+                  step="0.01"
                   value={minOrderAmount}
                   onChange={(e) => setMinOrderAmount(e.target.value)}
-                  placeholder="0"
+                  placeholder="0.00"
                 />
               </div>
               <div>
@@ -353,9 +360,10 @@ export function GeneralPage() {
                 <Input
                   type="number"
                   min="0"
+                  step="0.01"
                   value={freeDeliveryThreshold}
                   onChange={(e) => setFreeDeliveryThreshold(e.target.value)}
-                  placeholder="10000"
+                  placeholder="100.00"
                 />
               </div>
               <div>
@@ -363,9 +371,10 @@ export function GeneralPage() {
                 <Input
                   type="number"
                   min="0"
+                  step="0.01"
                   value={defaultDeliveryFee}
                   onChange={(e) => setDefaultDeliveryFee(e.target.value)}
-                  placeholder="999"
+                  placeholder="9.99"
                 />
               </div>
               <div className="flex items-center gap-3 pt-2">

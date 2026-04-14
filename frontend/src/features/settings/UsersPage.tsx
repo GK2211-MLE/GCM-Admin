@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { apiClient } from '@/lib/api-client';
@@ -118,6 +118,8 @@ interface UserFormDialogProps {
   onOpenChange: (open: boolean) => void;
   initialData?: AdminUser | null;
   locations: LocationOption[];
+  locationsError?: boolean;
+  onRetryLocations?: () => void;
   onSubmit: (data: UserFormData) => void;
   isPending: boolean;
 }
@@ -127,6 +129,8 @@ function UserFormDialog({
   onOpenChange,
   initialData,
   locations,
+  locationsError,
+  onRetryLocations,
   onSubmit,
   isPending,
 }: UserFormDialogProps) {
@@ -135,25 +139,32 @@ function UserFormDialog({
 
   const isEditing = !!initialData;
 
+  // Reset the form whenever the dialog is opened (by any means — parent's
+  // "Add User" button sets `open=true` programmatically, which does NOT
+  // fire onOpenChange, so we need this effect to catch those cases too).
+  useEffect(() => {
+    if (!open) return;
+    if (initialData) {
+      setForm({
+        name: initialData.name,
+        email: initialData.email,
+        phone: initialData.phone ?? '',
+        password: '', // never prefill — empty means "leave unchanged"
+        role: initialData.role,
+        assignedLocationId: initialData.assignedLocationId,
+        active: initialData.active,
+      });
+    } else {
+      setForm(EMPTY_FORM);
+    }
+    setErrors({});
+  }, [open, initialData]);
+
   const handleOpenChange = useCallback(
     (next: boolean) => {
-      if (next && initialData) {
-        setForm({
-          name: initialData.name,
-          email: initialData.email,
-          phone: initialData.phone ?? '',
-          password: '', // never prefill — empty means "leave unchanged"
-          role: initialData.role,
-          assignedLocationId: initialData.assignedLocationId,
-          active: initialData.active,
-        });
-      } else if (next) {
-        setForm(EMPTY_FORM);
-      }
-      setErrors({});
       onOpenChange(next);
     },
-    [initialData, onOpenChange],
+    [onOpenChange],
   );
 
   const setField = useCallback(
@@ -303,21 +314,43 @@ function UserFormDialog({
               <label className="mb-1.5 block text-sm font-medium text-(--text-primary)">
                 Assigned Location <span className="text-danger">*</span>
               </label>
-              <Select
-                value={form.assignedLocationId ?? ''}
-                onValueChange={(v) => setField('assignedLocationId', v || null)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a location..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {locations.map((loc) => (
-                    <SelectItem key={loc.id} value={loc.id}>
-                      {loc.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {locationsError ? (
+                <div className="rounded-lg border border-danger/30 bg-danger/5 p-3 text-xs text-danger">
+                  <p className="font-medium">Could not load locations.</p>
+                  <p className="mt-1 text-(--text-tertiary)">
+                    This usually clears up after a few seconds on Render cold-start.
+                  </p>
+                  {onRetryLocations && (
+                    <button
+                      type="button"
+                      onClick={onRetryLocations}
+                      className="mt-2 text-xs font-semibold underline"
+                    >
+                      Retry
+                    </button>
+                  )}
+                </div>
+              ) : locations.length === 0 ? (
+                <p className="rounded-lg border border-(--border-default) bg-(--bg-muted) p-3 text-xs text-(--text-tertiary)">
+                  Loading locations...
+                </p>
+              ) : (
+                <Select
+                  value={form.assignedLocationId ?? ''}
+                  onValueChange={(v) => setField('assignedLocationId', v || null)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a location..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {locations.map((loc) => (
+                      <SelectItem key={loc.id} value={loc.id}>
+                        {loc.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
               {errors.assignedLocationId && (
                 <p className="mt-1 text-xs text-danger">{errors.assignedLocationId}</p>
               )}
@@ -407,12 +440,19 @@ export function UsersPage() {
     },
   });
 
-  const { data: locations = [] } = useQuery({
+  const {
+    data: locations = [],
+    isError: locationsError,
+    refetch: refetchLocations,
+  } = useQuery({
     queryKey: queryKeys.settings.locations(),
     queryFn: async () => {
       const { data } = await apiClient.get<{ locations: LocationOption[] }>('/locations/all');
       return data.locations;
     },
+    // Retry once — CORS cold-starts on Render sometimes drop the
+    // Access-Control-Allow-Origin header on the very first request.
+    retry: 1,
   });
 
   // Filters
@@ -686,6 +726,8 @@ export function UsersPage() {
         }}
         initialData={editingUser}
         locations={locations}
+        locationsError={locationsError}
+        onRetryLocations={() => refetchLocations()}
         onSubmit={handleFormSubmit}
         isPending={createMutation.isPending || updateMutation.isPending}
       />

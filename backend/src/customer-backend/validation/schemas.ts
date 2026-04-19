@@ -42,6 +42,15 @@ export const checkoutSchema = z.object({
   delivery_time_slot: z.string().optional(),
   coupon_code: z.string().optional(),
   skip_payment: z.boolean().optional(),
+  // Contact the customer typed on the checkout form. If provided, the
+  // order confirmation email and the customer's profile name are updated
+  // to match — otherwise orders placed months after signup stay stuck on
+  // whatever name was entered at signup time.
+  contact: z.object({
+    name: z.string().optional(),
+    email: z.string().optional(),
+    phone: z.string().optional(),
+  }).optional(),
 });
 
 export const confirmPaymentSchema = z.object({

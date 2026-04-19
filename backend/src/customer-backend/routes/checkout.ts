@@ -196,13 +196,29 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
       );
     }
 
-    // Resolve customer name for the email (JWT only has email, not name).
+    // Resolve customer name for the email. If the customer typed a name
+    // on the checkout form that differs from the one on their profile,
+    // trust the checkout form and update the profile — otherwise the
+    // original signup name is baked in forever and every order email
+    // still greets them by the name they used months ago.
+    const typedName = body.contact?.name?.trim();
+    const typedPhone = body.contact?.phone?.trim();
     const [customerRow] = await db
-      .select({ name: appUsers.name })
+      .select({ name: appUsers.name, phone: appUsers.phone })
       .from(appUsers)
       .where(eq(appUsers.id, customer.id))
       .limit(1);
-    const customerName = customerRow?.name || customer.email.split('@')[0];
+
+    const profileUpdates: Record<string, unknown> = {};
+    if (typedName && typedName !== customerRow?.name) profileUpdates.name = typedName;
+    if (typedPhone && typedPhone !== customerRow?.phone) profileUpdates.phone = typedPhone;
+    if (Object.keys(profileUpdates).length > 0) {
+      profileUpdates.updatedAt = new Date();
+      await db.update(appUsers).set(profileUpdates).where(eq(appUsers.id, customer.id));
+    }
+
+    const customerName =
+      typedName || customerRow?.name || customer.email.split('@')[0];
 
     // Send order confirmation email (fire-and-forget, both bypass and Stripe paths)
     sendEmail(

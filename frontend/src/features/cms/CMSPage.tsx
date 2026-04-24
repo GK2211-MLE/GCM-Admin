@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { apiClient } from '@/lib/api-client';
+import { resolveImageSrc } from '@/lib/utils';
 import {
   FileEdit,
   Save,
@@ -613,7 +614,7 @@ function RecipesSection() {
               <div className="aspect-video bg-(--surface-tertiary) relative overflow-hidden">
                 {recipe.imageUrl ? (
                   <img
-                    src={recipe.imageUrl}
+                    src={resolveImageSrc(recipe.imageUrl)}
                     alt={recipe.title}
                     className="w-full h-full object-cover"
                   />

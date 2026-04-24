@@ -1,5 +1,22 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { API_HOST } from './api-client';
+
+/**
+ * Resolve an image URL for rendering in an <img src>. Admin-uploaded
+ * product / category images land in the DB as relative /api/uploads/...
+ * paths. The admin site is served from a different origin than the
+ * backend, so those paths must be rewritten to the backend host.
+ * Absolute URLs and data: URLs pass through unchanged.
+ */
+export function resolveImageSrc(url: string | undefined | null): string {
+  if (!url) return '';
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) {
+    return url;
+  }
+  if (url.startsWith('/')) return `${API_HOST}${url}`;
+  return url;
+}
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));

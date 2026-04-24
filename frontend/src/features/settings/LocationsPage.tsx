@@ -549,10 +549,20 @@ export function LocationsPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => apiClient.delete('/locations/' + id),
-    onSuccess: () => {
+    mutationFn: async (id: string) => {
+      const res = await apiClient.delete('/locations/' + id);
+      return res.data as { hardDeleted?: boolean; reason?: string };
+    },
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.settings.locations() });
-      toast.success('Location deleted');
+      // Backend returns { hardDeleted, reason? }. Tell the user whether
+      // the row was really removed or just archived because orders
+      // still reference it, instead of pretending both are the same.
+      if (data?.hardDeleted === false) {
+        toast.success(`Location ${data.reason || 'archived (still referenced)'}`);
+      } else {
+        toast.success('Location deleted');
+      }
       setDeleteOpen(false);
       setDeletingLocation(null);
     },

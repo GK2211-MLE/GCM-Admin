@@ -8,7 +8,7 @@ import {
 
 import { apiClient } from '@/lib/api-client';
 import { queryKeys } from '@/lib/query-keys';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, resolveImageSrc } from '@/lib/utils';
 import { useAuthStore } from '@/features/auth/store';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent } from '@/components/ui/card';
@@ -239,11 +239,16 @@ export function ProductDetailPage() {
 
   const deleteProduct = useMutation({
     mutationFn: async () => {
-      await apiClient.delete(`/products/${id}`);
+      const res = await apiClient.delete(`/products/${id}`);
+      return res.data as { hardDeleted?: boolean; reason?: string };
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.products.all });
-      toast.success('Product deleted');
+      if (data?.hardDeleted === false) {
+        toast.success(`Product ${data.reason || 'archived (still referenced)'}`);
+      } else {
+        toast.success('Product deleted');
+      }
       navigate('/products');
     },
   });
@@ -395,7 +400,7 @@ export function ProductDetailPage() {
           <div className="relative aspect-[4/3] overflow-hidden rounded-xl border border-[var(--border-default)] bg-[var(--surface-tertiary)] flex items-center justify-center">
             {form.imageUrl ? (
               <img
-                src={form.imageUrl}
+                src={resolveImageSrc(form.imageUrl)}
                 alt={form.name || 'Product'}
                 className="h-full w-full object-cover"
                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}

@@ -10,7 +10,7 @@ import {
 
 import { apiClient } from '@/lib/api-client';
 import { queryKeys } from '@/lib/query-keys';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, resolveImageSrc } from '@/lib/utils';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { DataTable } from '@/components/data-table/DataTable';
 import { Card, CardContent } from '@/components/ui/card';
@@ -358,7 +358,7 @@ export function InventoryPage() {
       cell: ({ row }) => (
         <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-[var(--border-default)] bg-[var(--surface-tertiary)]">
           {row.original.imageUrl ? (
-            <img src={row.original.imageUrl} alt={row.original.name} className="h-full w-full object-cover" />
+            <img src={resolveImageSrc(row.original.imageUrl)} alt={row.original.name} className="h-full w-full object-cover" />
           ) : (
             <ImageIcon className="h-5 w-5 text-[var(--text-tertiary)]" />
           )}

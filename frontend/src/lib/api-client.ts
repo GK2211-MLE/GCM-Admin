@@ -4,7 +4,18 @@ import { toast } from 'sonner';
 const TOKEN_KEY = 'f2c_admin_auth_token';
 const REFRESH_KEY = 'f2c_admin_refresh_token';
 
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
+// Absolute URL to the backend. The admin is a static site served from
+// its own origin (farm2cook-admin.onrender.com) which does NOT proxy
+// /api to the backend — so a relative '/api' baseURL would 404 on
+// every API call. Override per-env with VITE_API_URL; production
+// fallback is the current backend service.
+const API_BASE =
+  (import.meta.env.VITE_API_URL as string | undefined) ||
+  'https://farm2cook-dashbackend.onrender.com/api';
+
+// Re-exported so image helpers can rewrite relative /api/uploads/...
+// paths stored in the DB onto the backend host.
+export const API_HOST = API_BASE.replace(/\/api\/?$/, '');
 
 export const apiClient = axios.create({
   baseURL: API_BASE,

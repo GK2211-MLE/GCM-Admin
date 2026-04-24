@@ -1,6 +1,7 @@
 import { useState, useRef, useId } from 'react';
 import { Upload, Link as LinkIcon, ImageIcon, Loader2, X } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
+import { resolveImageSrc } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
@@ -28,15 +29,10 @@ interface ImageFieldProps {
 
 type Mode = 'url' | 'upload';
 
-// Resolve relative /api/uploads/... URLs against the API base for previews
-function resolvePreviewUrl(url: string): string {
-  if (!url) return '';
-  if (url.startsWith('/')) {
-    const base = (import.meta.env.VITE_API_URL || '/api').replace(/\/api$/, '');
-    return `${base}${url}`;
-  }
-  return url;
-}
+// Resolve relative /api/uploads/... URLs against the API host for previews.
+// Delegates to the shared resolveImageSrc so every place we show a stored
+// image goes through the same logic.
+const resolvePreviewUrl = resolveImageSrc;
 
 export function ImageField({ value, onChange, label = 'Image', helper, className }: ImageFieldProps) {
   // If the existing value looks like an uploaded file (relative path), default

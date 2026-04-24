@@ -1,7 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { locations } from '../db/schema.js';
+import {
+  locations,
+  orders,
+  products,
+  notifications,
+  adminUsers,
+} from '../db/schema.js';
 import { authGuard, adminGuard } from '../middleware/auth.js';
 import { getTenantId } from '../middleware/tenant.js';
 import { createLocationSchema, updateLocationSchema } from '../shared/index.js';
@@ -129,4 +135,106 @@ export async function locationRoutes(app: FastifyInstance) {
       };
     }
   });
+
+  // Merge one location into another, then hard-delete the source.
+  //
+  // Admin-only. Used to clean up legacy "Plano", "Irving", etc. rows
+  // that were left behind after rebranding to FARM2COOK PLANO /
+  // FARM2COOK IRVING etc. Historical orders pointing at the legacy row
+  // are re-parented onto the target, along with products, notifications,
+  // and any admin_users.assigned_location_id pointing there. Only then
+  // does the source row get dropped, so no FK violation, no orphans.
+  //
+  // product_locations and store_inventory for the source CASCADE-DROP
+  // when the source row is deleted — those are location-specific tags /
+  // stock counts, and the equivalents for the target already exist.
+  app.post(
+    '/:id/merge-into/:targetId',
+    { preHandler: [adminGuard] },
+    async (request, reply) => {
+      const tenantId = getTenantId(request);
+      const { id, targetId } = request.params as { id: string; targetId: string };
+
+      if (id === targetId) {
+        return reply.code(400).send({ error: 'Source and target must be different' });
+      }
+
+      // Both locations must exist in this tenant
+      const [source] = await db
+        .select()
+        .from(locations)
+        .where(and(eq(locations.id, id), eq(locations.tenantId, tenantId)))
+        .limit(1);
+      const [target] = await db
+        .select()
+        .from(locations)
+        .where(and(eq(locations.id, targetId), eq(locations.tenantId, tenantId)))
+        .limit(1);
+
+      if (!source) return reply.code(404).send({ error: 'Source location not found' });
+      if (!target) return reply.code(404).send({ error: 'Target location not found' });
+
+      // Repoint every non-cascaded FK onto the target, then drop the source.
+      // Drizzle's PG client doesn't expose a transaction wrapper here, so
+      // we run these sequentially — worst case on a mid-way failure is a
+      // partial merge that can be re-run; the endpoint is idempotent.
+      const updatedOrders = await db
+        .update(orders)
+        .set({ locationId: targetId, updatedAt: new Date() })
+        .where(and(eq(orders.tenantId, tenantId), eq(orders.locationId, id)))
+        .returning({ id: orders.id });
+
+      const updatedProducts = await db
+        .update(products)
+        .set({ locationId: targetId, updatedAt: new Date() })
+        .where(and(eq(products.tenantId, tenantId), eq(products.locationId, id)))
+        .returning({ id: products.id });
+
+      const updatedNotifications = await db
+        .update(notifications)
+        .set({ locationId: targetId })
+        .where(and(eq(notifications.tenantId, tenantId), eq(notifications.locationId, id)))
+        .returning({ id: notifications.id });
+
+      const updatedAdminUsers = await db
+        .update(adminUsers)
+        .set({ assignedLocationId: targetId, updatedAt: new Date() })
+        .where(and(
+          eq(adminUsers.tenantId, tenantId),
+          eq(adminUsers.assignedLocationId, id),
+        ))
+        .returning({ id: adminUsers.id });
+
+      // Source row is now unreferenced by non-cascade tables. Drop it
+      // (product_locations and store_inventory for the source cascade-drop).
+      try {
+        await db
+          .delete(locations)
+          .where(and(eq(locations.id, id), eq(locations.tenantId, tenantId)));
+      } catch (err) {
+        app.log.error({ err, id, targetId }, '[locations/merge] source delete failed');
+        return reply.code(500).send({
+          error: 'Merged references but could not delete source row',
+          moved: {
+            orders: updatedOrders.length,
+            products: updatedProducts.length,
+            notifications: updatedNotifications.length,
+            adminUsers: updatedAdminUsers.length,
+          },
+        });
+      }
+
+      return {
+        success: true,
+        source: { id: source.id, name: source.name },
+        target: { id: target.id, name: target.name },
+        moved: {
+          orders: updatedOrders.length,
+          products: updatedProducts.length,
+          notifications: updatedNotifications.length,
+          adminUsers: updatedAdminUsers.length,
+        },
+      };
+    },
+  );
 }

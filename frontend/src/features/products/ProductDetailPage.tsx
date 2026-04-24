@@ -286,6 +286,11 @@ export function ProductDetailPage() {
       imageUrl: form.imageUrl.trim(),
       active: form.active,
       inStock: form.inStock,
+      // New products ship with 100 units so they're immediately visible
+      // on the customer site. Editing an existing product does NOT touch
+      // stockQuantity — that's managed from the Inventory page. This
+      // keeps the backend zod default of 100 explicit at the call site.
+      ...(isNew ? { stockQuantity: 100 } : {}),
       sortOrder: parseInt(form.sortOrder, 10) || 0,
       isHalal: form.isHalal,
       locationIds,
@@ -303,7 +308,7 @@ export function ProductDetailPage() {
           }
         : {},
     };
-  }, [form, isAdmin, myLocationId]);
+  }, [form, isAdmin, myLocationId, isNew]);
 
   const onSave = useCallback(() => {
     const payload = buildPayload();

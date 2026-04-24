@@ -101,7 +101,12 @@ export const createProductSchema = z.object({
   locationIds: z.array(z.string().uuid()).optional(),
   active: z.boolean().default(true),
   inStock: z.boolean().default(true),
-  stockQuantity: z.number().int().min(0).default(0),
+  // New products get 100 units by default so they show up on the
+  // customer site immediately. Previously the default was 0, which
+  // combined with the customer-site filter `stockQuantity > 0` meant
+  // every freshly-added SKU appeared as "Out of Stock" until an admin
+  // remembered to visit the separate Inventory page.
+  stockQuantity: z.number().int().min(0).default(100),
   lowStockThreshold: z.number().int().min(0).default(10),
   sortOrder: z.number().int().default(0),
   isHalal: z.boolean().default(false),

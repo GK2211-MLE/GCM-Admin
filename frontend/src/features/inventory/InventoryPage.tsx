@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { type ColumnDef } from '@tanstack/react-table';
 import { toast } from 'sonner';
 import {
@@ -250,6 +250,12 @@ export function InventoryPage() {
   }), [search, categoryFilter, stockStatusFilter, storeFilter]);
 
   // ── Queries ───────────────────────────────────────────────────────────────
+  // keepPreviousData is critical: each keystroke in the search box
+  // changes queryParams → a new queryKey. Without it, isLoading flips
+  // to true every keystroke, which unmounts the whole page (see the
+  // `if (isLoading) return <LoadingSpinner />` below) — killing focus
+  // on the input. With it, previous data is preserved while the new
+  // fetch runs so isLoading only fires on the very first load.
   const { data, isLoading } = useQuery({
     queryKey: queryKeys.inventory.list(queryParams),
     queryFn: async () => {
@@ -258,6 +264,7 @@ export function InventoryPage() {
       });
       return data;
     },
+    placeholderData: keepPreviousData,
   });
 
   // Derive categories from loaded products

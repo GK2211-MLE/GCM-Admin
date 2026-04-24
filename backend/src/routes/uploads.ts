@@ -4,6 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import sharp from 'sharp';
 import { authGuard } from '../middleware/auth.js';
+import { config } from '../config.js';
 
 /* ────────────────────────────────────────────────────────────────
    Image upload routes — used by the admin panel for product,
@@ -112,8 +113,15 @@ export async function uploadRoutes(app: FastifyInstance) {
       return reply.code(500).send({ error: 'Could not save image' });
     }
 
-    // Public URL the frontend should store as the image's URL
-    const url = `/api/uploads/${filename}`;
+    // Public URL the frontend should store as the image's URL. Returning
+    // an ABSOLUTE URL (config.BASE_URL is the backend's public origin)
+    // means admin/customer sites on a different host can render the image
+    // without a resolve-relative-path helper. Falls back to relative if
+    // BASE_URL isn't configured so local dev still works.
+    const publicBase = (config.BASE_URL || '').replace(/\/$/, '');
+    const url = publicBase
+      ? `${publicBase}/api/uploads/${filename}`
+      : `/api/uploads/${filename}`;
     return {
       url,
       filename,

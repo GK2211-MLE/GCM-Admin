@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { eq, and, asc, desc, ilike, or, sql, inArray, isNull, notExists } from 'drizzle-orm';
 import jwt from 'jsonwebtoken';
 import { db } from '../db/client.js';
-import { products, categories, productLocations, locations, orders, orderItems } from '../db/schema.js';
+import { products, categories, productLocations, locations, orders, orderItems, cartItems } from '../db/schema.js';
 import { authGuard, getLocationScope } from '../middleware/auth.js';
 import { getTenantId } from '../middleware/tenant.js';
 import { config } from '../config.js';
@@ -424,14 +424,47 @@ export async function productRoutes(app: FastifyInstance) {
       });
     }
 
-    // FK ON DELETE CASCADE on product_locations cleans up the join rows.
-    const [product] = await db
-      .delete(products)
+    // Verify it exists in this tenant first so we can distinguish 404
+    // from FK-violation errors cleanly.
+    const [existing] = await db
+      .select({ id: products.id })
+      .from(products)
       .where(and(eq(products.id, id), eq(products.tenantId, tenantId)))
-      .returning();
+      .limit(1);
+    if (!existing) return reply.code(404).send({ error: 'Product not found' });
 
-    if (!product) return reply.code(404).send({ error: 'Product not found' });
-    return { success: true };
+    // Active carts blocking the delete are not historical — drop those
+    // rows first so a single customer's stale cart doesn't prevent
+    // cleanup. Orders, order_items and purchase_order_items ARE
+    // historical and we never touch them; if they reference this SKU
+    // we fall through to a soft delete below.
+    await db.delete(cartItems).where(eq(cartItems.productId, id));
+
+    // FK ON DELETE CASCADE covers product_locations, store_inventory,
+    // wishlist_items and product_reviews. Only order_items and
+    // purchase_order_items would block a hard delete now.
+    try {
+      await db
+        .delete(products)
+        .where(and(eq(products.id, id), eq(products.tenantId, tenantId)));
+      return { success: true, hardDeleted: true };
+    } catch (err) {
+      app.log.warn({ err, id }, '[products/delete] hard-delete blocked, falling back to soft');
+      // Soft delete: mark inactive + out of stock so customers can't
+      // buy it and admin grids can hide it, while order history stays
+      // intact. Matches how location DELETE handles the same case.
+      const [soft] = await db
+        .update(products)
+        .set({ active: false, inStock: false, updatedAt: new Date() })
+        .where(and(eq(products.id, id), eq(products.tenantId, tenantId)))
+        .returning();
+      if (!soft) return reply.code(404).send({ error: 'Product not found' });
+      return {
+        success: true,
+        hardDeleted: false,
+        reason: 'archived (referenced by existing orders)',
+      };
+    }
   });
 
   // Toggle active status

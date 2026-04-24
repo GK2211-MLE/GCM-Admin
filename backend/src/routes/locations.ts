@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import {
   locations,
   orders,
+  orderItems,
   products,
   notifications,
   adminUsers,
@@ -234,6 +235,104 @@ export async function locationRoutes(app: FastifyInstance) {
           notifications: updatedNotifications.length,
           adminUsers: updatedAdminUsers.length,
         },
+      };
+    },
+  );
+
+  // Purge a disabled location along with every order that was placed
+  // against it. Admin-only, hard-destructive, NOT reversible — intended
+  // for removing test / decommissioned stores whose order history has
+  // no long-term value.
+  //
+  // Safety rails:
+  //   1. Location must already be inactive (active=false). This forces
+  //      the caller to first hit DELETE (soft delete / archive) and
+  //      consciously come back for the hard purge — you cannot wipe a
+  //      live store in a single click.
+  //   2. Inside a transaction, so either the whole thing succeeds or
+  //      nothing at all changes.
+  //
+  // What actually gets removed:
+  //   - order_items for every order at this location
+  //   - orders at this location
+  //   - products.location_id nulled out (FK-safe; SKUs stay catalogue-wide)
+  //   - notifications.location_id nulled
+  //   - admin_users.assigned_location_id nulled
+  //   - product_locations and store_inventory cascade-drop via FK
+  //   - the location row itself
+  app.post(
+    '/:id/purge',
+    { preHandler: [adminGuard] },
+    async (request, reply) => {
+      const tenantId = getTenantId(request);
+      const { id } = request.params as { id: string };
+
+      const [source] = await db
+        .select()
+        .from(locations)
+        .where(and(eq(locations.id, id), eq(locations.tenantId, tenantId)))
+        .limit(1);
+      if (!source) return reply.code(404).send({ error: 'Location not found' });
+      if (source.active) {
+        return reply.code(400).send({
+          error: 'Location must be archived (active=false) before it can be purged',
+        });
+      }
+
+      const counts = await db.transaction(async (tx) => {
+        // Find every order for this location first so we can wipe items.
+        const orderRows = await tx
+          .select({ id: orders.id })
+          .from(orders)
+          .where(and(eq(orders.tenantId, tenantId), eq(orders.locationId, id)));
+        const orderIds = orderRows.map((o) => o.id);
+
+        let itemsDeleted = 0;
+        if (orderIds.length > 0) {
+          const items = await tx
+            .delete(orderItems)
+            .where(inArray(orderItems.orderId, orderIds))
+            .returning({ id: orderItems.id });
+          itemsDeleted = items.length;
+
+          await tx
+            .delete(orders)
+            .where(and(eq(orders.tenantId, tenantId), eq(orders.locationId, id)));
+        }
+
+        // Detach non-cascade FKs that don't have data we care about.
+        await tx
+          .update(products)
+          .set({ locationId: null, updatedAt: new Date() })
+          .where(and(eq(products.tenantId, tenantId), eq(products.locationId, id)));
+
+        await tx
+          .update(notifications)
+          .set({ locationId: null })
+          .where(and(eq(notifications.tenantId, tenantId), eq(notifications.locationId, id)));
+
+        await tx
+          .update(adminUsers)
+          .set({ assignedLocationId: null, updatedAt: new Date() })
+          .where(and(
+            eq(adminUsers.tenantId, tenantId),
+            eq(adminUsers.assignedLocationId, id),
+          ));
+
+        // Finally drop the location row. product_locations + store_inventory
+        // cascade-drop via their FK definition.
+        await tx
+          .delete(locations)
+          .where(and(eq(locations.id, id), eq(locations.tenantId, tenantId)));
+
+        return { ordersDeleted: orderIds.length, itemsDeleted };
+      });
+
+      return {
+        success: true,
+        purged: { id: source.id, name: source.name },
+        ordersDeleted: counts.ordersDeleted,
+        orderItemsDeleted: counts.itemsDeleted,
       };
     },
   );

@@ -85,18 +85,48 @@ export async function locationRoutes(app: FastifyInstance) {
     return { location };
   });
 
-  // Delete location (soft-delete: deactivate, since orders may reference it). Admin only.
+  // Delete location.
+  //
+  // First attempt a real hard delete. If that fails because an order or
+  // other row references the location (FK constraint), fall back to a
+  // soft delete (active=false). The response says which path was taken
+  // so the admin can show an accurate toast — previously this endpoint
+  // always soft-deleted and the admin list (which reads /locations/all)
+  // kept showing the row, so delete "didn't work" from the user's seat.
   app.delete('/:id', { preHandler: [adminGuard] }, async (request, reply) => {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };
 
-    const [location] = await db
-      .update(locations)
-      .set({ active: false, updatedAt: new Date() })
+    // Verify the row exists in this tenant first
+    const [existing] = await db
+      .select({ id: locations.id })
+      .from(locations)
       .where(and(eq(locations.id, id), eq(locations.tenantId, tenantId)))
-      .returning();
+      .limit(1);
 
-    if (!location) return reply.code(404).send({ error: 'Location not found' });
-    return { success: true };
+    if (!existing) return reply.code(404).send({ error: 'Location not found' });
+
+    try {
+      await db
+        .delete(locations)
+        .where(and(eq(locations.id, id), eq(locations.tenantId, tenantId)));
+      return { success: true, hardDeleted: true };
+    } catch (err) {
+      // Most likely a foreign-key violation because orders / inventory /
+      // etc. reference this location. Fall back to soft delete so the
+      // store disappears from customer-facing queries but historical
+      // orders still resolve their location.
+      const [soft] = await db
+        .update(locations)
+        .set({ active: false, updatedAt: new Date() })
+        .where(and(eq(locations.id, id), eq(locations.tenantId, tenantId)))
+        .returning();
+      if (!soft) return reply.code(404).send({ error: 'Location not found' });
+      return {
+        success: true,
+        hardDeleted: false,
+        reason: 'archived (referenced by existing orders)',
+      };
+    }
   });
 }

@@ -8,8 +8,9 @@ import { createLocationSchema, updateLocationSchema } from '../shared/index.js';
 
 /**
  * When a new location is created (or toggled active), create store_inventory
- * rows for every catalog-wide product (i.e. products with NO product_locations
- * rows) that doesn't already have a row for this location.
+ * rows for every product that should be visible at this location:
+ *   - catalog-wide products (no product_locations rows)
+ *   - products explicitly assigned to this location via product_locations
  */
 async function backfillInventoryForLocation(locationId: string, tenantId: string) {
   await db.execute(sql`
@@ -17,8 +18,9 @@ async function backfillInventoryForLocation(locationId: string, tenantId: string
     SELECT ${locationId}, p.id, p.stock_quantity, p.low_stock_threshold
     FROM products p
     WHERE p.tenant_id = ${tenantId}
-      AND NOT EXISTS (
-        SELECT 1 FROM product_locations pl WHERE pl.product_id = p.id
+      AND (
+        NOT EXISTS (SELECT 1 FROM product_locations pl WHERE pl.product_id = p.id)
+        OR EXISTS (SELECT 1 FROM product_locations pl WHERE pl.product_id = p.id AND pl.location_id = ${locationId})
       )
       AND NOT EXISTS (
         SELECT 1 FROM store_inventory si

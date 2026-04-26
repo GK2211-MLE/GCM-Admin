@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { eq, and, asc, desc, ilike, or, sql, inArray, isNull, notExists } from 'drizzle-orm';
 import jwt from 'jsonwebtoken';
 import { db } from '../db/client.js';
-import { products, categories, productLocations, locations, orders, orderItems, cartItems } from '../db/schema.js';
+import { products, categories, productLocations, locations, orders, orderItems, cartItems, storeInventory } from '../db/schema.js';
 import { authGuard, getLocationScope } from '../middleware/auth.js';
 import { getTenantId } from '../middleware/tenant.js';
 import { config } from '../config.js';
@@ -54,6 +54,66 @@ async function setProductLocations(productId: string, locationIds: string[]): Pr
   await db.insert(productLocations).values(
     locationIds.map((locationId) => ({ productId, locationId })),
   );
+}
+
+/**
+ * Sync storeInventory rows for a product to match the given locations.
+ *   - Creates missing rows with default stock values.
+ *   - Removes rows for locations NOT in the list (so the product disappears
+ *     from stores it's no longer tagged to).
+ *   - If locationIds is empty (catalog-wide / "All locations"), creates
+ *     storeInventory rows for ALL active locations so the product appears
+ *     in every store's inventory.
+ */
+async function syncStoreInventory(
+  productId: string,
+  locationIds: string[],
+  tenantId: string,
+  defaults: { stockQuantity: number; lowStockThreshold: number },
+): Promise<void> {
+  // Resolve target locations: specific stores, or ALL active stores
+  let targetLocationIds = locationIds;
+  if (targetLocationIds.length === 0) {
+    const allLocs = await db
+      .select({ id: locations.id })
+      .from(locations)
+      .where(and(eq(locations.tenantId, tenantId), eq(locations.active, true)));
+    targetLocationIds = allLocs.map((l) => l.id);
+  }
+
+  if (targetLocationIds.length === 0) return;
+
+  // Find all existing inventory rows for this product
+  const existing = await db
+    .select({ id: storeInventory.id, locationId: storeInventory.locationId })
+    .from(storeInventory)
+    .where(eq(storeInventory.productId, productId));
+
+  const locationSet = new Set(targetLocationIds);
+  const existingLocationSet = new Set(existing.map((r) => r.locationId));
+
+  // Remove rows for locations no longer in the list (only when specific stores selected)
+  if (locationIds.length > 0) {
+    const toRemove = existing.filter((r) => !locationSet.has(r.locationId));
+    if (toRemove.length > 0) {
+      await db.delete(storeInventory).where(
+        inArray(storeInventory.id, toRemove.map((r) => r.id)),
+      );
+    }
+  }
+
+  // Add rows for locations not yet in inventory
+  const toAdd = targetLocationIds.filter((id) => !existingLocationSet.has(id));
+  if (toAdd.length > 0) {
+    await db.insert(storeInventory).values(
+      toAdd.map((locationId) => ({
+        productId,
+        locationId,
+        stockQuantity: defaults.stockQuantity,
+        lowStockThreshold: defaults.lowStockThreshold,
+      })),
+    );
+  }
 }
 
 export async function productRoutes(app: FastifyInstance) {
@@ -298,6 +358,12 @@ export async function productRoutes(app: FastifyInstance) {
 
     await setProductLocations(product.id, locationIdsToWrite);
 
+    // Auto-create storeInventory rows so the product appears in per-store inventory
+    await syncStoreInventory(product.id, locationIdsToWrite, tenantId, {
+      stockQuantity: product.stockQuantity,
+      lowStockThreshold: product.lowStockThreshold,
+    });
+
     return { product: { ...product, locationIds: locationIdsToWrite } };
   });
 
@@ -393,6 +459,12 @@ export async function productRoutes(app: FastifyInstance) {
 
     if (newLocationIds !== null) {
       await setProductLocations(id, newLocationIds);
+
+      // Auto-create storeInventory rows for newly added locations
+      await syncStoreInventory(id, newLocationIds, tenantId, {
+        stockQuantity: product.stockQuantity,
+        lowStockThreshold: product.lowStockThreshold,
+      });
     }
 
     const finalLocationIds = await getProductLocationIds(id);

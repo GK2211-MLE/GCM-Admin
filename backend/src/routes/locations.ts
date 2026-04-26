@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import {
   locations,
@@ -8,10 +8,32 @@ import {
   products,
   notifications,
   adminUsers,
+  storeInventory,
 } from '../db/schema.js';
 import { authGuard, adminGuard } from '../middleware/auth.js';
 import { getTenantId } from '../middleware/tenant.js';
 import { createLocationSchema, updateLocationSchema } from '../shared/index.js';
+
+/**
+ * When a new location is created (or toggled active), create store_inventory
+ * rows for every catalog-wide product (i.e. products with NO product_locations
+ * rows) that doesn't already have a row for this location.
+ */
+async function backfillInventoryForLocation(locationId: string, tenantId: string) {
+  await db.execute(sql`
+    INSERT INTO store_inventory (location_id, product_id, stock_quantity, low_stock_threshold)
+    SELECT ${locationId}, p.id, p.stock_quantity, p.low_stock_threshold
+    FROM products p
+    WHERE p.tenant_id = ${tenantId}
+      AND NOT EXISTS (
+        SELECT 1 FROM product_locations pl WHERE pl.product_id = p.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM store_inventory si
+        WHERE si.product_id = p.id AND si.location_id = ${locationId}
+      )
+  `);
+}
 
 export async function locationRoutes(app: FastifyInstance) {
   // List all locations including inactive (auth required)
@@ -43,6 +65,11 @@ export async function locationRoutes(app: FastifyInstance) {
       .where(eq(locations.id, id))
       .returning();
 
+    // When toggling to active, backfill inventory for catalog-wide products
+    if (location.active) {
+      await backfillInventoryForLocation(location.id, tenantId);
+    }
+
     return { location };
   });
 
@@ -72,6 +99,11 @@ export async function locationRoutes(app: FastifyInstance) {
       .insert(locations)
       .values({ ...data, tenantId })
       .returning();
+
+    // Backfill store_inventory for catalog-wide products
+    if (location.active) {
+      await backfillInventoryForLocation(location.id, tenantId);
+    }
 
     return { location };
   });

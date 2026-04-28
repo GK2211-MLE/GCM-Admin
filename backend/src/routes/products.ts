@@ -343,6 +343,22 @@ export async function productRoutes(app: FastifyInstance) {
 
     const images = data.imageUrl ? [data.imageUrl] : undefined;
 
+    // Auto-generate a slug from the product name when the caller didn't
+    // supply one. Without this, products land with slug='' (the column
+    // default) and the customer site's <a href={`/shop/${product.slug}`}>
+    // template resolves to /shop/ — clicking a product just reloads the
+    // shop list. Mirrors the same logic in the PUT handler below.
+    let slug: string | undefined;
+    if (data.slug !== undefined) {
+      slug = data.slug.trim() || undefined;
+    }
+    if (!slug && data.name) {
+      slug = data.name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+    }
+
     // Strip locationIds from the insert payload — it's not a column on products.
     const { locationIds: _ignoreLocationIds, ...productInsert } = data;
 
@@ -353,6 +369,7 @@ export async function productRoutes(app: FastifyInstance) {
         tenantId,
         categoryId: categoryId ?? null,
         ...(images ? { images } : {}),
+        ...(slug ? { slug } : {}),
       })
       .returning();
 

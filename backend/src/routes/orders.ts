@@ -108,6 +108,9 @@ export async function orderRoutes(app: FastifyInstance) {
     const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
 
     // Helper: build a tenant + (optional) location condition.
+    // `scoped` includes ALL orders regardless of payment status — used
+    // for the recent-orders feed and the status breakdown so the admin
+    // can still see pending_payment rows.
     const scoped = (extra?: ReturnType<typeof and>) =>
       scope
         ? extra
@@ -117,29 +120,43 @@ export async function orderRoutes(app: FastifyInstance) {
           ? and(eq(orders.tenantId, tenantId), extra)!
           : eq(orders.tenantId, tenantId);
 
-    // Core counts
+    // `paidScoped` is the same but adds paymentStatus='paid'. Every
+    // revenue / order-count KPI on the dashboard goes through this so
+    // unfinished checkouts (pending_payment rows that were created when
+    // a customer hit "Proceed" but never paid) don't inflate the
+    // numbers the admin uses to make decisions.
+    const paidScoped = (extra?: ReturnType<typeof and>) => {
+      const paid = eq(orders.paymentStatus, 'paid');
+      const baseConds = scope
+        ? [eq(orders.tenantId, tenantId), eq(orders.locationId, scope), paid]
+        : [eq(orders.tenantId, tenantId), paid];
+      if (extra) baseConds.push(extra);
+      return and(...baseConds)!;
+    };
+
+    // Core counts — paid only.
     const [totalOrders] = await db
       .select({ count: count() })
       .from(orders)
-      .where(scoped());
+      .where(paidScoped());
 
     const [todayOrders] = await db
       .select({ count: count() })
       .from(orders)
-      .where(scoped(gte(orders.createdAt, today)));
+      .where(paidScoped(gte(orders.createdAt, today)));
 
     const [revenue] = await db
       .select({ total: sql<number>`COALESCE(SUM(${orders.total}), 0)` })
       .from(orders)
-      .where(scoped());
+      .where(paidScoped());
 
     const [todayRevenue] = await db
       .select({ total: sql<number>`COALESCE(SUM(${orders.total}), 0)` })
       .from(orders)
-      .where(scoped(gte(orders.createdAt, today)));
+      .where(paidScoped(gte(orders.createdAt, today)));
 
-    // Customer count: for non-admin scope, count distinct customers with at
-    // least one order at this location. For admin, total tenant customers.
+    // Customer count: for non-admin scope, count distinct customers who
+    // actually paid at this location. For admin, total tenant customers.
     let totalCustomersNum: number;
     if (scope) {
       const [c] = await db
@@ -147,7 +164,7 @@ export async function orderRoutes(app: FastifyInstance) {
           count: sql<number>`count(distinct coalesce(${orders.customerId}::text, ${orders.appUserId}::text))::int`,
         })
         .from(orders)
-        .where(scoped());
+        .where(paidScoped());
       totalCustomersNum = Number(c?.count ?? 0);
     } else {
       const [customerCount] = await db
@@ -169,25 +186,26 @@ export async function orderRoutes(app: FastifyInstance) {
       .where(scoped())
       .groupBy(orders.status);
 
-    // Delivery method breakdown
+    // Delivery method breakdown — paid only (drives Home Delivery /
+    // Store Pickup KPIs that the admin reads as fulfilment workload).
     const deliveryMethodCounts = await db
       .select({ method: orders.deliveryMethod, count: count() })
       .from(orders)
-      .where(scoped())
+      .where(paidScoped())
       .groupBy(orders.deliveryMethod);
 
-    // Week-over-week growth
+    // Week-over-week growth — paid only.
     const [thisWeekRevenue] = await db
       .select({ total: sql<number>`COALESCE(SUM(${orders.total}), 0)`, count: count() })
       .from(orders)
-      .where(scoped(gte(orders.createdAt, sevenDaysAgo)));
+      .where(paidScoped(gte(orders.createdAt, sevenDaysAgo)));
 
     const [lastWeekRevenue] = await db
       .select({ total: sql<number>`COALESCE(SUM(${orders.total}), 0)`, count: count() })
       .from(orders)
-      .where(scoped(and(gte(orders.createdAt, fourteenDaysAgo), lte(orders.createdAt, sevenDaysAgo))));
+      .where(paidScoped(and(gte(orders.createdAt, fourteenDaysAgo), lte(orders.createdAt, sevenDaysAgo))));
 
-    // Daily revenue for chart (last 30 days)
+    // Daily revenue for chart (last 30 days) — paid only.
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     const dailyRevenue = await db
       .select({
@@ -196,15 +214,15 @@ export async function orderRoutes(app: FastifyInstance) {
         count: count(),
       })
       .from(orders)
-      .where(scoped(gte(orders.createdAt, thirtyDaysAgo)))
+      .where(paidScoped(gte(orders.createdAt, thirtyDaysAgo)))
       .groupBy(sql`TO_CHAR(${orders.createdAt}, 'YYYY-MM-DD')`)
       .orderBy(sql`TO_CHAR(${orders.createdAt}, 'YYYY-MM-DD')`);
 
-    // Top products by order frequency. We need a join here so the location
-    // filter on `orders` can apply.
+    // Top products by order frequency — paid only, otherwise the
+    // bestseller list could be stuffed with abandoned-cart picks.
     const topProductsWhere = scope
-      ? and(eq(orders.tenantId, tenantId), eq(orders.locationId, scope))!
-      : eq(orders.tenantId, tenantId);
+      ? and(eq(orders.tenantId, tenantId), eq(orders.locationId, scope), eq(orders.paymentStatus, 'paid'))!
+      : and(eq(orders.tenantId, tenantId), eq(orders.paymentStatus, 'paid'))!;
     const topProducts = await db
       .select({
         productName: orderItems.productName,
@@ -258,7 +276,12 @@ export async function orderRoutes(app: FastifyInstance) {
     };
 
     const statusMap = Object.fromEntries(statusCounts.map((s) => [s.status, s.count]));
-    const pendingCount = (statusMap['pending_payment'] || 0) + (statusMap['confirmed'] || 0);
+    // "Pending Orders" on the dashboard means "paid but not yet fulfilled"
+    // — admin's action queue. Previously this added `pending_payment` to
+    // the count, which conflated abandoned checkouts (no money yet) with
+    // confirmed orders awaiting fulfilment. pending_payment now lives in
+    // the abandoned-checkouts metric on /analytics/summary instead.
+    const pendingCount = (statusMap['confirmed'] || 0);
     const activeDeliveries = (statusMap['out_for_delivery'] || 0);
     const processingCount = (statusMap['processing'] || 0) + (statusMap['ready'] || 0);
 

@@ -208,4 +208,107 @@ export async function factoryResetRoutes(app: FastifyInstance) {
       };
     },
   );
+
+  // ── /clear-customer-data ──────────────────────────────────────────
+  // Lighter version of factory-reset: wipes orders + customer accounts +
+  // marketing artefacts, but PRESERVES the product catalogue, categories,
+  // locations, vendors, CMS content, recipes, role permissions, and the
+  // primary admin login. Use this to clean test data before launch
+  // without re-seeding the catalogue.
+  app.post(
+    '/clear-customer-data',
+    { preHandler: [adminGuard] },
+    async (request, reply) => {
+      const tenantId = getTenantId(request);
+      const body = (request.body ?? {}) as { confirm?: string };
+      if (body.confirm !== 'WIPE-CUSTOMER-DATA') {
+        return reply.code(400).send({
+          error: 'Missing confirm token',
+          hint: 'POST { "confirm": "WIPE-CUSTOMER-DATA" } to proceed',
+        });
+      }
+
+      const counts = await db.transaction(async (tx) => {
+        // FK-safe order: delete child rows first.
+        const oi = await tx.delete(orderItems).returning({ id: orderItems.id });
+        const ord = await tx
+          .delete(orders)
+          .where(eq(orders.tenantId, tenantId))
+          .returning({ id: orders.id });
+        const ci = await tx.delete(cartItems).returning({ id: cartItems.id });
+        const c = await tx.delete(carts).returning({ id: carts.id });
+        const wi = await tx.delete(wishlistItems).returning({ id: wishlistItems.id });
+        const pr = await tx.delete(productReviews).returning({ id: productReviews.id });
+        const nt = await tx
+          .delete(notifications)
+          .where(eq(notifications.tenantId, tenantId))
+          .returning({ id: notifications.id });
+        const ps = await tx
+          .delete(pushSubscriptions)
+          .where(eq(pushSubscriptions.tenantId, tenantId))
+          .returning({ id: pushSubscriptions.id });
+        const sa = await tx.delete(savedAddresses).returning({ id: savedAddresses.id });
+        const pwr = await tx.delete(passwordResets).returning({ id: passwordResets.id });
+        const ns = await tx.delete(newsletterSubs).returning({ id: newsletterSubs.id });
+        const cm = await tx
+          .delete(contactMessages)
+          .where(eq(contactMessages.tenantId, tenantId))
+          .returning({ id: contactMessages.id });
+        const cs = await tx
+          .delete(conversationStates)
+          .where(eq(conversationStates.tenantId, tenantId))
+          .returning({ id: conversationStates.id });
+        const al = await tx
+          .delete(auditLog)
+          .where(eq(auditLog.tenantId, tenantId))
+          .returning({ id: auditLog.id });
+        // Customers + accounts
+        const cust = await tx
+          .delete(customers)
+          .where(eq(customers.tenantId, tenantId))
+          .returning({ id: customers.id });
+        const au = await tx
+          .delete(appUsers)
+          .where(eq(appUsers.tenantId, tenantId))
+          .returning({ id: appUsers.id });
+        // Non-primary admin staff
+        const stm = await tx
+          .delete(adminUsers)
+          .where(and(
+            eq(adminUsers.tenantId, tenantId),
+            ne(adminUsers.email, PRESERVED_ADMIN_EMAIL),
+          ))
+          .returning({ id: adminUsers.id });
+
+        return {
+          orderItems: oi.length,
+          orders: ord.length,
+          cartItems: ci.length,
+          carts: c.length,
+          wishlistItems: wi.length,
+          productReviews: pr.length,
+          notifications: nt.length,
+          pushSubscriptions: ps.length,
+          savedAddresses: sa.length,
+          passwordResets: pwr.length,
+          newsletterSubs: ns.length,
+          contactMessages: cm.length,
+          conversationStates: cs.length,
+          auditLog: al.length,
+          customers: cust.length,
+          appUsers: au.length,
+          adminUsersRemoved: stm.length,
+        };
+      });
+
+      return {
+        success: true,
+        preservedAdmin: PRESERVED_ADMIN_EMAIL,
+        preservedTables: ['products', 'product_locations', 'store_inventory',
+          'categories', 'locations', 'vendors', 'cms_pages', 'recipes',
+          'role_permissions', 'promotions', 'purchase_orders'],
+        deleted: counts,
+      };
+    },
+  );
 }

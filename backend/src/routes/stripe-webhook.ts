@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { orders } from '../db/schema.js';
 import { config } from '../config.js';
 import { broadcastSSE } from './sse.js';
+import { sendOrderConfirmationFor } from '../services/order-email.js';
 
 export async function stripeWebhookRoutes(app: FastifyInstance) {
   app.post('/webhook', {
@@ -23,6 +24,10 @@ export async function stripeWebhookRoutes(app: FastifyInstance) {
         const paymentStatus = session.payment_status as string | undefined;
 
         // Only mark as paid if Stripe says the session itself is paid.
+        // The atomic where-pending guard means we only send the email
+        // once: if /confirm already ran first, this UPDATE returns no
+        // rows and we skip the email; if the webhook wins the race,
+        // /confirm will see paymentStatus='paid' and skip too.
         if (paymentStatus === 'paid') {
           const [order] = await db
             .update(orders)
@@ -31,11 +36,15 @@ export async function stripeWebhookRoutes(app: FastifyInstance) {
               status: 'confirmed',
               updatedAt: new Date(),
             })
-            .where(eq(orders.stripePaymentIntentId, sessionId))
+            .where(and(
+              eq(orders.stripePaymentIntentId, sessionId),
+              eq(orders.paymentStatus, 'pending'),
+            ))
             .returning();
 
           if (order) {
             broadcastSSE(order.tenantId, { type: 'order:paid', data: order });
+            void sendOrderConfirmationFor(order.id);
           }
         }
         break;
@@ -52,11 +61,15 @@ export async function stripeWebhookRoutes(app: FastifyInstance) {
             status: 'confirmed',
             updatedAt: new Date(),
           })
-          .where(eq(orders.stripePaymentIntentId, piId))
+          .where(and(
+            eq(orders.stripePaymentIntentId, piId),
+            eq(orders.paymentStatus, 'pending'),
+          ))
           .returning();
 
         if (order) {
           broadcastSSE(order.tenantId, { type: 'order:paid', data: order });
+          void sendOrderConfirmationFor(order.id);
         }
         break;
       }

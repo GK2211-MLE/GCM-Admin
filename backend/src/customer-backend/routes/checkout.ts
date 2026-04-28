@@ -6,8 +6,7 @@ import { orders, orderItems, products, productLocations, promotions, tenants, ap
 import { config } from '../../config.js';
 import { customerAuthGuard } from '../middleware/auth.js';
 import { checkoutSchema, confirmPaymentSchema } from '../validation/schemas.js';
-import { sendEmail } from '../../services/email.js';
-import { orderConfirmationEmail } from '../../services/email-templates.js';
+import { sendOrderConfirmationFor } from '../../services/order-email.js';
 
 function generateOrderCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -220,37 +219,19 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
     const customerName =
       typedName || customerRow?.name || customer.email.split('@')[0];
 
-    // Send order confirmation email (fire-and-forget, both bypass and Stripe paths)
-    sendEmail(
-      customer.email,
-      `Order ${order.orderCode} Confirmed — Farm2Cook`,
-      orderConfirmationEmail(
-        customerName,
-        {
-          orderCode: order.orderCode,
-          items: verifiedItems.map((it) => ({
-            productName: it.productName,
-            quantity: it.quantity,
-            unitPrice: it.unitPrice,
-            total: it.total,
-          })),
-          subtotal: discountedSubtotal,
-          tax,
-          deliveryFee,
-          total,
-          deliveryMethod: body.fulfillment_type,
-          paymentMethod: skipPayment ? 'test_bypass' : 'stripe',
-          createdAt: order.createdAt,
-        },
-        config.CUSTOMER_FRONTEND_URL,
-      ),
-    ).catch((err) => console.error('[checkout] order email failed:', err));
-
     // 8. Bypass path — return the order without a clientSecret. The
     // customer site sees no clientSecret and no checkout_url, so it
     // navigates straight to /order-success and treats the order as
     // already paid (which it is, in our DB).
+    //
+    // The confirmation email used to fire here for BOTH paths, which
+    // meant Stripe customers got "Order Confirmed" emails the moment
+    // they hit Proceed to Checkout — before paying a cent. Now the
+    // bypass path emails immediately (because it's already marked
+    // paid), and the Stripe path waits for /confirm or the webhook to
+    // flip paymentStatus to paid.
     if (skipPayment) {
+      void sendOrderConfirmationFor(order.id);
       return {
         order: {
           id: order.id,
@@ -261,6 +242,9 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
         message: 'Order created via test bypass (Stripe skipped)',
       };
     }
+    // Reference vars to silence unused-var warnings from the removed
+    // synchronous send block.
+    void customerName; void verifiedItems;
 
     // 9. Create a Stripe PaymentIntent (NOT a Checkout Session).
     // Returning a PaymentIntent client_secret lets the customer site embed
@@ -333,6 +317,9 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
       return { order, message: 'Payment already confirmed' };
     }
 
+    // Atomic transition: only flip the row to paid if it's still pending.
+    // If the Stripe webhook has already raced ahead and marked it paid,
+    // the WHERE clause won't match and we won't double-send the email.
     const [updated] = await db
       .update(orders)
       .set({
@@ -340,9 +327,19 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
         paymentStatus: 'paid',
         updatedAt: new Date(),
       })
-      .where(eq(orders.id, order.id))
+      .where(and(
+        eq(orders.id, order.id),
+        eq(orders.paymentStatus, 'pending'),
+      ))
       .returning();
 
-    return { order: updated, message: 'Payment confirmed' };
+    if (updated) {
+      void sendOrderConfirmationFor(updated.id);
+    }
+
+    return {
+      order: updated ?? order,
+      message: updated ? 'Payment confirmed' : 'Already confirmed',
+    };
   });
 }

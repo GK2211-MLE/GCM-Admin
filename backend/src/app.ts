@@ -66,9 +66,16 @@ export async function buildApp() {
   await app.register(cors, {
     origin: [
       config.ADMIN_ORIGIN,
-      'https://farm2cook-admin-frontend.onrender.com',
-      'https://farm2cook-customer.onrender.com',  // customer website (planned slug)
-      'https://customer-akxe.onrender.com',  // customer website (actual deployed slug)
+      'https://farm2cook-admin.onrender.com',          // prod admin
+      'https://farm2cook-admin-frontend.onrender.com', // legacy admin slug
+      'https://farm2cook-customer.onrender.com',       // customer (planned slug)
+      'https://customer-akxe.onrender.com',            // customer (actual prod slug)
+      // Staging origins (deploy from `dev` branch). The staging admin
+      // talks to this same backend because the staging backend service
+      // is currently suspended on the free tier — without these on the
+      // allow-list, every staging request fails CORS preflight.
+      'https://f2c-admin-staging.onrender.com',
+      'https://f2c-customer-staging.onrender.com',
       'http://localhost:5173',  // admin local dev
       'http://localhost:3000',  // customer local dev
     ],

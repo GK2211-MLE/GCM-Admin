@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { orders, orderItems, appUsers } from '../db/schema.js';
+import { orders, orderItems, appUsers, customers } from '../db/schema.js';
 import { sendEmail } from './email.js';
 import { orderConfirmationEmail } from './email-templates.js';
 import { config } from '../config.js';
@@ -38,9 +38,20 @@ export async function sendOrderConfirmationFor(orderId: string): Promise<void> {
         email = u.email;
         name = u.name || email.split('@')[0];
       }
+    } else if (order.customerId) {
+      // Guest checkout: pull from the legacy customers table.
+      const [c] = await db
+        .select({ email: customers.email, name: customers.name })
+        .from(customers)
+        .where(eq(customers.id, order.customerId))
+        .limit(1);
+      if (c?.email) {
+        email = c.email;
+        name = c.name || email.split('@')[0];
+      }
     }
     if (!email) {
-      // Bot/customer-table flow: nothing to email.
+      // Bot order with no email on file — nothing to send.
       return;
     }
 

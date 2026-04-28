@@ -21,14 +21,24 @@ export async function categoryRoutes(app: FastifyInstance) {
   // gets serialized). Two queries is bulletproof and at our scale (≤ 20
   // categories, ≤ 200 products) the cost is negligible.
   app.get('/', async (request) => {
-    const query = request.query as { tenantId?: string };
+    const query = request.query as { tenantId?: string; includeInactive?: string };
+    // Default behaviour for the customer-facing site: hide categories the
+    // admin has marked inactive. The admin catalog page passes
+    // ?includeInactive=1 to see everything.
+    const includeInactive =
+      query.includeInactive === '1' || query.includeInactive === 'true';
 
-    const catRows = query.tenantId
-      ? await db
-          .select()
-          .from(categories)
-          .where(eq(categories.tenantId, query.tenantId))
-          .orderBy(asc(categories.sortOrder))
+    const baseConds = (extra?: ReturnType<typeof eq>) => {
+      const parts: ReturnType<typeof eq>[] = [];
+      if (query.tenantId) parts.push(eq(categories.tenantId, query.tenantId));
+      if (!includeInactive) parts.push(eq(categories.active, true));
+      if (extra) parts.push(extra);
+      return parts.length === 0 ? undefined : (parts.length === 1 ? parts[0] : and(...parts));
+    };
+
+    const catWhere = baseConds();
+    const catRows = catWhere
+      ? await db.select().from(categories).where(catWhere).orderBy(asc(categories.sortOrder))
       : await db.select().from(categories).orderBy(asc(categories.sortOrder));
 
     // Aggregate active product counts grouped by (tenantId, category-slug)

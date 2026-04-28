@@ -156,7 +156,7 @@ export function ProductDetailPage() {
   const { data: dbCategories = [] } = useQuery({
     queryKey: queryKeys.catalog.categories(),
     queryFn: async () => {
-      const { data } = await apiClient.get<{ categories: { slug: string; name: string; active: boolean }[] }>('/categories');
+      const { data } = await apiClient.get<{ categories: { slug: string; name: string; active: boolean }[] }>('/categories?includeInactive=1');
       return data.categories;
     },
   });

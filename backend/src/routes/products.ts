@@ -259,9 +259,12 @@ export async function productRoutes(app: FastifyInstance) {
 
     const parsedLimit = query.limit ? Math.max(1, Math.min(200, parseInt(query.limit, 10))) : null;
 
+    // Sort: higher sortOrder appears first (admin uses it as a "priority"
+    // number — set 100 to feature near the top, 0 = neutral, negatives go
+    // last). createdAt as a tiebreaker so newest wins among equal-priority.
     let qb = conditions.length > 0
-      ? db.select().from(products).where(and(...conditions)).orderBy(asc(products.sortOrder)).$dynamic()
-      : db.select().from(products).orderBy(asc(products.sortOrder)).$dynamic();
+      ? db.select().from(products).where(and(...conditions)).orderBy(desc(products.sortOrder), desc(products.createdAt)).$dynamic()
+      : db.select().from(products).orderBy(desc(products.sortOrder), desc(products.createdAt)).$dynamic();
 
     if (parsedLimit !== null && !Number.isNaN(parsedLimit)) {
       qb = qb.limit(parsedLimit);

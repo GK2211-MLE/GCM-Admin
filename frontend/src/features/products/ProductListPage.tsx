@@ -77,7 +77,7 @@ export function ProductListPage() {
   const { data: dbCategories = [] } = useQuery({
     queryKey: queryKeys.catalog.categories(),
     queryFn: async () => {
-      const { data } = await apiClient.get<{ categories: { slug: string; name: string }[] }>('/categories');
+      const { data } = await apiClient.get<{ categories: { slug: string; name: string }[] }>('/categories?includeInactive=1');
       return data.categories;
     },
   });

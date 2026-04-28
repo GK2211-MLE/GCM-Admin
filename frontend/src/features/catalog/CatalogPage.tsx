@@ -77,7 +77,11 @@ export function CatalogPage() {
   const { data: categories = [], isLoading } = useQuery({
     queryKey: queryKeys.catalog.categories(),
     queryFn: async () => {
-      const { data } = await apiClient.get<{ categories: Category[] }>('/categories');
+      // Admin needs every category (active + inactive) so the toggle /
+      // edit / delete actions still appear for archived rows. The
+      // customer site hits /categories without this flag and only gets
+      // active categories.
+      const { data } = await apiClient.get<{ categories: Category[] }>('/categories?includeInactive=1');
       return data.categories;
     },
   });

@@ -35,6 +35,7 @@ import { newsletterRoutes } from './routes/newsletter-subs.js';
 import { adminReviewRoutes } from './routes/reviews-admin.js';
 import { adminWishlistRoutes } from './routes/wishlists-admin.js';
 import { uploadRoutes } from './routes/uploads.js';
+import { factoryResetRoutes } from './routes/factory-reset.js';
 
 /* ════════════════════════════════════════════════════════════════
    CUSTOMER WEBSITE ROUTES (from customer-backend/)
@@ -116,6 +117,7 @@ export async function buildApp() {
   await app.register(adminReviewRoutes, { prefix: '/api/admin/reviews' });
   await app.register(adminWishlistRoutes, { prefix: '/api/admin/wishlists' });
   await app.register(uploadRoutes, { prefix: '/api/uploads' });
+  await app.register(factoryResetRoutes, { prefix: '/api/admin' });
 
   /* ════════════════════════════════════════════════════════════════
      CUSTOMER WEBSITE ROUTES (from customer-backend/)

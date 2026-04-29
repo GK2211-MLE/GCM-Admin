@@ -364,6 +364,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS recipes_tenant_slug_idx ON recipes(tenant_id, 
 DO $$ BEGIN ALTER TABLE products ADD COLUMN is_halal BOOLEAN NOT NULL DEFAULT false; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 DO $$ BEGIN ALTER TABLE products ADD COLUMN halal_info JSONB NOT NULL DEFAULT '{}'; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 
+-- Per-product trust badges. Default true so existing products carry the
+-- same promises that were previously hardcoded as static TRUST_BADGES on
+-- the customer detail page; admin can untoggle if a SKU doesn't qualify.
+DO $$ BEGIN ALTER TABLE products ADD COLUMN badge_no_antibiotics BOOLEAN NOT NULL DEFAULT true; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE products ADD COLUMN badge_cold_chain BOOLEAN NOT NULL DEFAULT true; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE products ADD COLUMN badge_fresh BOOLEAN NOT NULL DEFAULT true; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+
 -- ============================================================
 -- Customer-website tables (added by customer-backend/)
 -- All idempotent — safe to run on every startup.

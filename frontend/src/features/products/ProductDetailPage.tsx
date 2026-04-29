@@ -55,6 +55,9 @@ interface Product {
   inStock: boolean;
   isHalal?: boolean;
   halalInfo?: Record<string, unknown>;
+  badgeNoAntibiotics?: boolean;
+  badgeColdChain?: boolean;
+  badgeFresh?: boolean;
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
@@ -96,6 +99,9 @@ interface FormState {
   sortOrder: string;
   isHalal: boolean;
   halalInfo: HalalInfo;
+  badgeNoAntibiotics: boolean;
+  badgeColdChain: boolean;
+  badgeFresh: boolean;
   // Per-location availability. 'all' = catalog-wide; 'specific' = list.
   locationMode: LocationMode;
   locationIds: string[];
@@ -113,6 +119,9 @@ const EMPTY_FORM: FormState = {
   sortOrder: '0',
   isHalal: false,
   halalInfo: { ...EMPTY_HALAL_INFO },
+  badgeNoAntibiotics: true,
+  badgeColdChain: true,
+  badgeFresh: true,
   locationMode: 'all',
   locationIds: [],
 };
@@ -186,6 +195,9 @@ export function ProductDetailPage() {
         inStock: product.inStock ?? true,
         sortOrder: String(product.sortOrder ?? 0),
         isHalal: product.isHalal ?? false,
+        badgeNoAntibiotics: product.badgeNoAntibiotics ?? true,
+        badgeColdChain: product.badgeColdChain ?? true,
+        badgeFresh: product.badgeFresh ?? true,
         locationMode: productLocationIds.length === 0 ? 'all' : 'specific',
         locationIds: productLocationIds,
         halalInfo: {
@@ -293,6 +305,9 @@ export function ProductDetailPage() {
       ...(isNew ? { stockQuantity: 100 } : {}),
       sortOrder: parseInt(form.sortOrder, 10) || 0,
       isHalal: form.isHalal,
+      badgeNoAntibiotics: form.badgeNoAntibiotics,
+      badgeColdChain: form.badgeColdChain,
+      badgeFresh: form.badgeFresh,
       locationIds,
       halalInfo: form.isHalal
         ? {
@@ -572,6 +587,77 @@ export function ProductDetailPage() {
                     checked={form.inStock}
                     onCheckedChange={(checked) => updateField('inStock', checked)}
                   />
+                </div>
+
+                {/* Trust badges — shown on the customer product detail page.
+                    No Antibiotics / Cold Chain / Fresh default ON.
+                    Hand Slaughtered defaults OFF (only halal SKUs qualify);
+                    it's bound to isHalal so the existing Halal Certification
+                    section below stays the single source of truth for cert
+                    details. */}
+                <div className="rounded-lg border border-[var(--border-default)] p-4 md:col-span-2 space-y-3">
+                  <div>
+                    <p className="text-sm font-medium text-[var(--text-primary)]">Trust Badges</p>
+                    <p className="text-xs text-[var(--text-tertiary)]">
+                      Shown on the product detail page. Untoggle if this SKU doesn't qualify.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-md border border-[var(--border-default)]/60 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">&#128016;</span>
+                      <div>
+                        <p className="text-sm text-[var(--text-primary)]">Hand Slaughtered</p>
+                        <p className="text-xs text-[var(--text-tertiary)]">Halal-certified processing (also fills the Halal section below)</p>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={form.isHalal}
+                      onCheckedChange={(checked) => updateField('isHalal', checked)}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-md border border-[var(--border-default)]/60 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">&#128138;</span>
+                      <div>
+                        <p className="text-sm text-[var(--text-primary)]">No Antibiotics</p>
+                        <p className="text-xs text-[var(--text-tertiary)]">Pasture-raised, antibiotic-free</p>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={form.badgeNoAntibiotics}
+                      onCheckedChange={(checked) => updateField('badgeNoAntibiotics', checked)}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-md border border-[var(--border-default)]/60 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">&#129482;</span>
+                      <div>
+                        <p className="text-sm text-[var(--text-primary)]">Cold Chain</p>
+                        <p className="text-xs text-[var(--text-tertiary)]">Temperature-controlled farm to door</p>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={form.badgeColdChain}
+                      onCheckedChange={(checked) => updateField('badgeColdChain', checked)}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-md border border-[var(--border-default)]/60 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">&#10003;</span>
+                      <div>
+                        <p className="text-sm text-[var(--text-primary)]">100% Fresh</p>
+                        <p className="text-xs text-[var(--text-tertiary)]">Never frozen</p>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={form.badgeFresh}
+                      onCheckedChange={(checked) => updateField('badgeFresh', checked)}
+                    />
+                  </div>
                 </div>
 
                 {/* ── Available at locations ──────────────────────────── */}

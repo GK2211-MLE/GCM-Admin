@@ -115,6 +115,12 @@ export const createProductSchema = z.object({
   sortOrder: z.number().int().default(999),
   isHalal: z.boolean().default(false),
   halalInfo: z.record(z.unknown()).default({}),
+  // Trust badges shown on the customer product detail page. Default true
+  // because the customer site previously rendered them hardcoded on every
+  // SKU; flipping these to false hides the badge for that one product.
+  badgeNoAntibiotics: z.boolean().default(true),
+  badgeColdChain: z.boolean().default(true),
+  badgeFresh: z.boolean().default(true),
 });
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 

@@ -259,21 +259,38 @@ export async function productRoutes(app: FastifyInstance) {
 
     const parsedLimit = query.limit ? Math.max(1, Math.min(200, parseInt(query.limit, 10))) : null;
 
-    // Sort: lower sortOrder appears first (admin types 1 to put a SKU
-    // first, 2 for second, etc — matches how typical CMSes expose
-    // "display order"). New products default to 999 so anything the
-    // admin explicitly numbers floats above the un-numbered ones.
-    // Tiebreaker is desc(createdAt) so newest wins on ties.
+    // Two-level sort:
+    //   1. categories.sortOrder — the order admin set in the Catalog
+    //      page. Drives the "All" view: products of the first-listed
+    //      category come before products of the second, etc.
+    //   2. products.sortOrder — drives the order within each category
+    //      (and the order in a single-category page like /shop?category=Lamb).
+    //   3. products.createdAt DESC — tiebreaker so the newest SKU wins
+    //      when both sortOrders are equal.
+    // Joining via products.category (slug) = categories.slug. Products
+    // whose category slug doesn't match any categories row (orphaned)
+    // sort last because LEFT JOIN nulls become NULL which Postgres
+    // sorts last on ASC by default.
+    const orderCols = [
+      asc(categories.sortOrder),
+      asc(products.sortOrder),
+      desc(products.createdAt),
+    ];
     let qb = conditions.length > 0
-      ? db.select().from(products).where(and(...conditions)).orderBy(asc(products.sortOrder), desc(products.createdAt)).$dynamic()
-      : db.select().from(products).orderBy(asc(products.sortOrder), desc(products.createdAt)).$dynamic();
+      ? db.select({ p: products }).from(products)
+          .leftJoin(categories, eq(products.category, categories.slug))
+          .where(and(...conditions)).orderBy(...orderCols).$dynamic()
+      : db.select({ p: products }).from(products)
+          .leftJoin(categories, eq(products.category, categories.slug))
+          .orderBy(...orderCols).$dynamic();
 
     if (parsedLimit !== null && !Number.isNaN(parsedLimit)) {
       qb = qb.limit(parsedLimit);
     }
 
     const rows = await qb;
-    return { products: rows };
+    // Unwrap the joined { p } shape back to a flat product array.
+    return { products: rows.map((r) => r.p) };
   });
 
   // Get single product. Includes the locationIds the product is tagged for

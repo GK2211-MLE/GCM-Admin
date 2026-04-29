@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { eq, and, asc, desc, ilike, or, sql, inArray, isNull, notExists } from 'drizzle-orm';
+import { eq, ne, and, asc, desc, ilike, or, sql, inArray, isNull, notExists } from 'drizzle-orm';
 import jwt from 'jsonwebtoken';
 import { db } from '../db/client.js';
 import { products, categories, productLocations, locations, orders, orderItems, cartItems, storeInventory } from '../db/schema.js';
@@ -114,6 +114,80 @@ async function syncStoreInventory(
       })),
     );
   }
+}
+
+/**
+ * Renumber a single category's products to a tight 1..N sequence,
+ * placing `productId` at `position` (1-indexed). Other products keep
+ * their relative order. Used by POST and PUT to enforce the rule that
+ * sortOrder is unique inside a category and that bumping one entry
+ * cascades the rest.
+ *
+ * If `productId` isn't currently in the category, it's added at the
+ * desired position. If it IS in the category it's lifted out and
+ * re-inserted at `position`.
+ */
+async function placeProductAtPosition(
+  productId: string,
+  position: number,
+  category: string,
+  tenantId: string,
+): Promise<void> {
+  if (!category) return;
+  const others = await db
+    .select({ id: products.id })
+    .from(products)
+    .where(
+      and(
+        eq(products.tenantId, tenantId),
+        eq(products.category, category),
+        ne(products.id, productId),
+      ),
+    )
+    .orderBy(asc(products.sortOrder), desc(products.createdAt));
+
+  const totalAfter = others.length + 1;
+  const pos = Math.max(1, Math.min(position, totalAfter));
+  const ordered: { id: string }[] = [
+    ...others.slice(0, pos - 1),
+    { id: productId },
+    ...others.slice(pos - 1),
+  ];
+
+  await Promise.all(
+    ordered.map((p, i) =>
+      db
+        .update(products)
+        .set({ sortOrder: i + 1, updatedAt: new Date() })
+        .where(eq(products.id, p.id)),
+    ),
+  );
+}
+
+/**
+ * Tighten a category's product sortOrder to 1..N preserving current
+ * order. Used after a product moves OUT of a category, to close the
+ * gap left behind.
+ */
+async function renumberCategoryProducts(
+  category: string,
+  tenantId: string,
+): Promise<void> {
+  if (!category) return;
+  const all = await db
+    .select({ id: products.id })
+    .from(products)
+    .where(and(eq(products.tenantId, tenantId), eq(products.category, category)))
+    .orderBy(asc(products.sortOrder), desc(products.createdAt));
+
+  await Promise.all(
+    all.map((p, i) =>
+      db
+        .update(products)
+        .set({ sortOrder: i + 1, updatedAt: new Date() })
+        .where(eq(products.id, p.id)),
+    ),
+  );
 }
 
 export async function productRoutes(app: FastifyInstance) {
@@ -403,6 +477,20 @@ export async function productRoutes(app: FastifyInstance) {
       lowStockThreshold: product.lowStockThreshold,
     });
 
+    // Slot the new product into its category at the requested sortOrder,
+    // shifting the rest down by 1. The schema default (999) gets clamped
+    // to N+1 = "append at end", so unspecified sortOrder still lands new
+    // SKUs at the bottom of the category.
+    if (product.category) {
+      await placeProductAtPosition(product.id, data.sortOrder, product.category, tenantId);
+      const [refreshed] = await db
+        .select()
+        .from(products)
+        .where(eq(products.id, product.id))
+        .limit(1);
+      return { product: { ...(refreshed ?? product), locationIds: locationIdsToWrite } };
+    }
+
     return { product: { ...product, locationIds: locationIdsToWrite } };
   });
 
@@ -506,8 +594,28 @@ export async function productRoutes(app: FastifyInstance) {
       });
     }
 
+    // Auto-shift sortOrder so values stay unique 1..N within each category.
+    //   - sortOrder change → re-place this product, others cascade.
+    //   - category change → close gap in old category, slot into new one.
+    const categoryChanged =
+      data.category !== undefined && data.category !== existing.category;
+    const sortOrderChanged =
+      data.sortOrder !== undefined && data.sortOrder !== existing.sortOrder;
+
+    if (categoryChanged || sortOrderChanged) {
+      const targetCategory = product.category;
+      const desiredPos = data.sortOrder ?? product.sortOrder ?? 999;
+      if (targetCategory) {
+        await placeProductAtPosition(id, desiredPos, targetCategory, tenantId);
+      }
+      if (categoryChanged && existing.category && existing.category !== targetCategory) {
+        await renumberCategoryProducts(existing.category, tenantId);
+      }
+    }
+
+    const [refreshed] = await db.select().from(products).where(eq(products.id, id)).limit(1);
     const finalLocationIds = await getProductLocationIds(id);
-    return { product: { ...product, locationIds: finalLocationIds } };
+    return { product: { ...(refreshed ?? product), locationIds: finalLocationIds } };
   });
 
   // Delete product

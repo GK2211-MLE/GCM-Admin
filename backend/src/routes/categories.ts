@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { eq, and, asc, count } from 'drizzle-orm';
+import { eq, ne, and, asc, count } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { categories, products } from '../db/schema.js';
 import { authGuard } from '../middleware/auth.js';
@@ -8,6 +8,41 @@ import { createCategorySchema, updateCategorySchema } from '../shared/index.js';
 
 function toSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+}
+
+/**
+ * Renumber categories within a tenant to a tight 1..N sequence,
+ * placing `categoryId` at `position` (1-indexed). Other categories
+ * keep their relative order. Mirrors `placeProductAtPosition` in
+ * products.ts so categories also enforce unique sortOrder.
+ */
+async function placeCategoryAtPosition(
+  categoryId: string,
+  position: number,
+  tenantId: string,
+): Promise<void> {
+  const others = await db
+    .select({ id: categories.id })
+    .from(categories)
+    .where(and(eq(categories.tenantId, tenantId), ne(categories.id, categoryId)))
+    .orderBy(asc(categories.sortOrder));
+
+  const totalAfter = others.length + 1;
+  const pos = Math.max(1, Math.min(position, totalAfter));
+  const ordered: { id: string }[] = [
+    ...others.slice(0, pos - 1),
+    { id: categoryId },
+    ...others.slice(pos - 1),
+  ];
+
+  await Promise.all(
+    ordered.map((c, i) =>
+      db
+        .update(categories)
+        .set({ sortOrder: i + 1, updatedAt: new Date() })
+        .where(eq(categories.id, c.id)),
+    ),
+  );
 }
 
 export async function categoryRoutes(app: FastifyInstance) {
@@ -101,7 +136,17 @@ export async function categoryRoutes(app: FastifyInstance) {
       .values({ ...data, slug, tenantId })
       .returning();
 
-    return { category };
+    // Slot the new category into the requested sortOrder, shifting the
+    // rest down by 1. Schema default (0) lands at the top; admin can
+    // override by passing a number.
+    await placeCategoryAtPosition(category.id, data.sortOrder, tenantId);
+
+    const [refreshed] = await db
+      .select()
+      .from(categories)
+      .where(eq(categories.id, category.id))
+      .limit(1);
+    return { category: refreshed ?? category };
   });
 
   // Update category (auth required)
@@ -109,6 +154,13 @@ export async function categoryRoutes(app: FastifyInstance) {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };
     const data = updateCategorySchema.parse(request.body);
+
+    const [existing] = await db
+      .select()
+      .from(categories)
+      .where(and(eq(categories.id, id), eq(categories.tenantId, tenantId)))
+      .limit(1);
+    if (!existing) return reply.code(404).send({ error: 'Category not found' });
 
     // If name changed but slug not provided, regenerate slug
     const updateData: Record<string, unknown> = { ...data, updatedAt: new Date() };
@@ -123,6 +175,18 @@ export async function categoryRoutes(app: FastifyInstance) {
       .returning();
 
     if (!category) return reply.code(404).send({ error: 'Category not found' });
+
+    // Auto-shift sortOrder so values stay unique 1..N within the tenant.
+    if (data.sortOrder !== undefined && data.sortOrder !== existing.sortOrder) {
+      await placeCategoryAtPosition(id, data.sortOrder, tenantId);
+      const [refreshed] = await db
+        .select()
+        .from(categories)
+        .where(eq(categories.id, id))
+        .limit(1);
+      return { category: refreshed ?? category };
+    }
+
     return { category };
   });
 

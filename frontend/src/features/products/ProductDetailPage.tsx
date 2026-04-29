@@ -58,6 +58,7 @@ interface Product {
   badgeNoAntibiotics?: boolean;
   badgeColdChain?: boolean;
   badgeFresh?: boolean;
+  badgeHandSlaughtered?: boolean;
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
@@ -102,6 +103,7 @@ interface FormState {
   badgeNoAntibiotics: boolean;
   badgeColdChain: boolean;
   badgeFresh: boolean;
+  badgeHandSlaughtered: boolean;
   // Per-location availability. 'all' = catalog-wide; 'specific' = list.
   locationMode: LocationMode;
   locationIds: string[];
@@ -122,6 +124,7 @@ const EMPTY_FORM: FormState = {
   badgeNoAntibiotics: true,
   badgeColdChain: true,
   badgeFresh: true,
+  badgeHandSlaughtered: false,
   locationMode: 'all',
   locationIds: [],
 };
@@ -198,6 +201,7 @@ export function ProductDetailPage() {
         badgeNoAntibiotics: product.badgeNoAntibiotics ?? true,
         badgeColdChain: product.badgeColdChain ?? true,
         badgeFresh: product.badgeFresh ?? true,
+        badgeHandSlaughtered: product.badgeHandSlaughtered ?? false,
         locationMode: productLocationIds.length === 0 ? 'all' : 'specific',
         locationIds: productLocationIds,
         halalInfo: {
@@ -308,6 +312,7 @@ export function ProductDetailPage() {
       badgeNoAntibiotics: form.badgeNoAntibiotics,
       badgeColdChain: form.badgeColdChain,
       badgeFresh: form.badgeFresh,
+      badgeHandSlaughtered: form.badgeHandSlaughtered,
       locationIds,
       halalInfo: form.isHalal
         ? {
@@ -591,10 +596,9 @@ export function ProductDetailPage() {
 
                 {/* Trust badges — shown on the customer product detail page.
                     No Antibiotics / Cold Chain / Fresh default ON.
-                    Hand Slaughtered defaults OFF (only halal SKUs qualify);
-                    it's bound to isHalal so the existing Halal Certification
-                    section below stays the single source of truth for cert
-                    details. */}
+                    Hand Slaughtered defaults OFF and is independent from
+                    the Halal Certification section below — admin can flip
+                    one without affecting the other. */}
                 <div className="rounded-lg border border-[var(--border-default)] p-4 md:col-span-2 space-y-3">
                   <div>
                     <p className="text-sm font-medium text-[var(--text-primary)]">Trust Badges</p>
@@ -608,12 +612,12 @@ export function ProductDetailPage() {
                       <span className="text-lg">&#128016;</span>
                       <div>
                         <p className="text-sm text-[var(--text-primary)]">Hand Slaughtered</p>
-                        <p className="text-xs text-[var(--text-tertiary)]">Halal-certified processing (also fills the Halal section below)</p>
+                        <p className="text-xs text-[var(--text-tertiary)]">Halal-certified processing</p>
                       </div>
                     </div>
                     <Switch
-                      checked={form.isHalal}
-                      onCheckedChange={(checked) => updateField('isHalal', checked)}
+                      checked={form.badgeHandSlaughtered}
+                      onCheckedChange={(checked) => updateField('badgeHandSlaughtered', checked)}
                     />
                   </div>
 

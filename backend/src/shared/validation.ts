@@ -121,6 +121,9 @@ export const createProductSchema = z.object({
   badgeNoAntibiotics: z.boolean().default(true),
   badgeColdChain: z.boolean().default(true),
   badgeFresh: z.boolean().default(true),
+  // Hand Slaughtered is independent from isHalal — admin manages the cert
+  // section separately. Default false: only halal SKUs should show it.
+  badgeHandSlaughtered: z.boolean().default(false),
 });
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 

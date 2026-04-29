@@ -96,6 +96,7 @@ export const products = pgTable(
     badgeNoAntibiotics: boolean('badge_no_antibiotics').notNull().default(true),
     badgeColdChain: boolean('badge_cold_chain').notNull().default(true),
     badgeFresh: boolean('badge_fresh').notNull().default(true),
+    badgeHandSlaughtered: boolean('badge_hand_slaughtered').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

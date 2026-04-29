@@ -370,6 +370,10 @@ DO $$ BEGIN ALTER TABLE products ADD COLUMN halal_info JSONB NOT NULL DEFAULT '{
 DO $$ BEGIN ALTER TABLE products ADD COLUMN badge_no_antibiotics BOOLEAN NOT NULL DEFAULT true; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 DO $$ BEGIN ALTER TABLE products ADD COLUMN badge_cold_chain BOOLEAN NOT NULL DEFAULT true; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 DO $$ BEGIN ALTER TABLE products ADD COLUMN badge_fresh BOOLEAN NOT NULL DEFAULT true; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+-- Hand Slaughtered is a separate badge from is_halal: a product can be
+-- hand-slaughtered without the full halal-cert paperwork filled in, and
+-- vice versa. Default false because it only applies to halal SKUs.
+DO $$ BEGIN ALTER TABLE products ADD COLUMN badge_hand_slaughtered BOOLEAN NOT NULL DEFAULT false; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 
 -- ============================================================
 -- Customer-website tables (added by customer-backend/)

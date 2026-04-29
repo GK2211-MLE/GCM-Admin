@@ -108,7 +108,11 @@ export const createProductSchema = z.object({
   // remembered to visit the separate Inventory page.
   stockQuantity: z.number().int().min(0).default(100),
   lowStockThreshold: z.number().int().min(0).default(10),
-  sortOrder: z.number().int().default(0),
+  // 999 (not 0) so that any explicit display-order admin types — 1, 2,
+  // 4, etc — floats above the un-numbered ones with the customer
+  // /products endpoint sorting ASC. With a default of 0 every new SKU
+  // would jam at the top and crowd out the explicitly-ordered ones.
+  sortOrder: z.number().int().default(999),
   isHalal: z.boolean().default(false),
   halalInfo: z.record(z.unknown()).default({}),
 });

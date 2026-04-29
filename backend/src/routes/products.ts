@@ -259,12 +259,14 @@ export async function productRoutes(app: FastifyInstance) {
 
     const parsedLimit = query.limit ? Math.max(1, Math.min(200, parseInt(query.limit, 10))) : null;
 
-    // Sort: higher sortOrder appears first (admin uses it as a "priority"
-    // number — set 100 to feature near the top, 0 = neutral, negatives go
-    // last). createdAt as a tiebreaker so newest wins among equal-priority.
+    // Sort: lower sortOrder appears first (admin types 1 to put a SKU
+    // first, 2 for second, etc — matches how typical CMSes expose
+    // "display order"). New products default to 999 so anything the
+    // admin explicitly numbers floats above the un-numbered ones.
+    // Tiebreaker is desc(createdAt) so newest wins on ties.
     let qb = conditions.length > 0
-      ? db.select().from(products).where(and(...conditions)).orderBy(desc(products.sortOrder), desc(products.createdAt)).$dynamic()
-      : db.select().from(products).orderBy(desc(products.sortOrder), desc(products.createdAt)).$dynamic();
+      ? db.select().from(products).where(and(...conditions)).orderBy(asc(products.sortOrder), desc(products.createdAt)).$dynamic()
+      : db.select().from(products).orderBy(asc(products.sortOrder), desc(products.createdAt)).$dynamic();
 
     if (parsedLimit !== null && !Number.isNaN(parsedLimit)) {
       qb = qb.limit(parsedLimit);

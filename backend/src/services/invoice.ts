@@ -2,6 +2,7 @@ import puppeteer from 'puppeteer';
 import { formatCents } from '../shared/index.js';
 import { sendEmail } from './email.js';
 import { brandedEmail } from './email-templates.js';
+import { FARM2COOK_LOGO_DATA_URL } from '../assets/farm2cook-logo.js';
 
 interface InvoiceItem {
   productName: string;
@@ -72,9 +73,9 @@ export function generateInvoiceHtml(
       body { padding: 20px; }
       .no-print { display: none !important; }
     }
-    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 2px solid #16a34a; }
-    .brand { font-size: 28px; font-weight: 700; color: #16a34a; }
-    .brand-sub { font-size: 12px; color: #6b7280; margin-top: 4px; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; padding-bottom: 20px; border-bottom: 2px solid #cc2b2b; }
+    .brand-logo { height: 64px; width: auto; display: block; }
+    .brand-sub { font-size: 11px; color: #6b7280; margin-top: 6px; letter-spacing: 0.05em; text-transform: uppercase; font-weight: 600; }
     .invoice-meta { text-align: right; }
     .invoice-meta h2 { font-size: 20px; color: #374151; margin-bottom: 4px; }
     .invoice-meta p { font-size: 13px; color: #6b7280; }
@@ -92,14 +93,16 @@ export function generateInvoiceHtml(
     .totals-table tr td { padding: 6px 0; font-size: 14px; }
     .totals-table tr td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
     .totals-table .total-row td { padding-top: 10px; border-top: 2px solid #1f2937; font-weight: 700; font-size: 16px; }
-    .payment-badge { display: inline-block; background: #f0fdf4; color: #16a34a; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; margin-top: 16px; }
-    .footer { margin-top: 50px; padding-top: 20px; border-top: 1px solid #e5e7eb; text-align: center; color: #9ca3af; font-size: 12px; }
+    .payment-badge { display: inline-block; background: #fdf2f2; color: #cc2b2b; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; margin-top: 16px; }
+    .totals-table .total-row td { color: #cc2b2b; }
+    .footer { margin-top: 50px; padding-top: 20px; border-top: 1px solid #e5e7eb; text-align: center; color: #9ca3af; font-size: 12px; line-height: 1.6; }
+    .footer .footer-brand { color: #1a1a1a; font-weight: 600; }
   </style>
 </head>
 <body>
   <div class="header">
     <div>
-      <div class="brand">Farm2Cook</div>
+      <img src="${FARM2COOK_LOGO_DATA_URL}" alt="FARM2COOK" class="brand-logo" />
       <div class="brand-sub">Fresh from farm to your kitchen</div>
     </div>
     <div class="invoice-meta">
@@ -147,12 +150,12 @@ export function generateInvoiceHtml(
   </div>
 
   <div class="footer">
-    <p>Thank you for your order!</p>
-    <p style="margin-top:4px;">Farm2Cook</p>
+    <p>Thank you for choosing <span class="footer-brand">Farm2Cook</span>.</p>
+    <p style="margin-top:4px;">Questions about this invoice? Email <a href="mailto:hello@farm2cook.com" style="color:#cc2b2b;text-decoration:none;">hello@farm2cook.com</a></p>
   </div>
 
   <div class="no-print" style="text-align:center;margin-top:30px;">
-    <button onclick="window.print()" style="padding:10px 24px;background:#16a34a;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
+    <button onclick="window.print()" style="padding:10px 24px;background:#cc2b2b;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
       Print Invoice
     </button>
   </div>

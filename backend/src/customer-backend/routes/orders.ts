@@ -218,7 +218,11 @@ export async function customerOrderRoutes(app: FastifyInstance) {
       .limit(1);
 
     if (!order) return reply.code(404).send({ error: 'Order not found' });
-    if (order.paymentStatus !== 'paid') {
+    // Invoice is the record of the original transaction. We let customers
+    // download it both for currently-paid orders AND orders that were
+    // paid and later refunded — the original receipt is still valid
+    // accounting evidence; refunds are a separate event.
+    if (order.paymentStatus !== 'paid' && order.paymentStatus !== 'refunded') {
       return reply.code(409).send({
         error: 'Invoice is only available after payment is completed.',
       });

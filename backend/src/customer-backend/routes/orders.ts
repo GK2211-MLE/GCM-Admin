@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, and, desc, sql, inArray } from 'drizzle-orm';
 import { db } from '../../db/client.js';
-import { orders, orderItems, products } from '../../db/schema.js';
+import { orders, orderItems, products, appUsers } from '../../db/schema.js';
 import { customerAuthGuard } from '../middleware/auth.js';
+import { generateInvoiceHtml, generateInvoicePdf } from '../../services/invoice.js';
 
 export async function customerOrderRoutes(app: FastifyInstance) {
   // ── List my orders ──────────────────────────────────────────
@@ -191,5 +192,56 @@ export async function customerOrderRoutes(app: FastifyInstance) {
     );
 
     return { order: { ...order, items: enrichedItems } };
+  });
+
+  // ── Download invoice as PDF ─────────────────────────────────
+  // Streams a brand-styled PDF back to the customer for the given order.
+  // Scoped to the authenticated customer (orders.appUserId) so a logged-in
+  // user can never download someone else's invoice. Limited to paid
+  // orders — until payment clears, the receipt is just an order summary,
+  // not an invoice. Reuses the same generator the email service uses,
+  // so the PDF the customer downloads is byte-for-byte the same as the
+  // one we attach to the invoice email.
+  app.get('/:id/invoice.pdf', { preHandler: [customerAuthGuard] }, async (request, reply) => {
+    const customerId = request.customer!.id;
+    const { id } = request.params as { id: string };
+
+    const isUuid = id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+
+    const [order] = await db
+      .select()
+      .from(orders)
+      .where(and(
+        isUuid ? eq(orders.id, id) : eq(orders.orderCode, id),
+        eq(orders.appUserId, customerId),
+      ))
+      .limit(1);
+
+    if (!order) return reply.code(404).send({ error: 'Order not found' });
+    if (order.paymentStatus !== 'paid') {
+      return reply.code(409).send({
+        error: 'Invoice is only available after payment is completed.',
+      });
+    }
+
+    const items = await db
+      .select()
+      .from(orderItems)
+      .where(eq(orderItems.orderId, order.id));
+
+    const [customer] = await db
+      .select({ name: appUsers.name, phone: appUsers.phone, email: appUsers.email })
+      .from(appUsers)
+      .where(eq(appUsers.id, customerId))
+      .limit(1);
+
+    const html = generateInvoiceHtml(order, items, customer ?? { name: null, phone: null, email: null });
+    const pdf = await generateInvoicePdf(html);
+
+    reply
+      .header('Content-Type', 'application/pdf')
+      .header('Content-Disposition', `attachment; filename="INV-${order.orderCode}.pdf"`)
+      .header('Cache-Control', 'no-store');
+    return reply.send(pdf);
   });
 }

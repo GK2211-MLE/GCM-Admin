@@ -160,7 +160,7 @@ export function generateInvoiceHtml(
 </html>`;
 }
 
-async function generateInvoicePdf(html: string): Promise<Buffer> {
+export async function generateInvoicePdf(html: string): Promise<Buffer> {
   const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
   try {
     const page = await browser.newPage();

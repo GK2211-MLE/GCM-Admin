@@ -164,10 +164,25 @@ export function generateInvoiceHtml(
 }
 
 export async function generateInvoicePdf(html: string): Promise<Buffer> {
-  const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+  // Containerized hosts (Render, etc.) need --no-sandbox because the
+  // setuid sandbox helper isn't installed; --disable-dev-shm-usage
+  // routes shared memory to /tmp because /dev/shm is small inside
+  // most container images and chromium will fail allocations there.
+  const browser = await puppeteer.launch({
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+    ],
+  });
   try {
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+    // setContent default waitUntil is 'load' which sometimes hangs on
+    // base64 inline images. The data URL is already in-memory, so we
+    // explicitly wait for 'domcontentloaded' (cheap) instead of
+    // 'networkidle0' (expensive — would sit on a 500ms idle timer).
+    await page.setContent(html, { waitUntil: 'domcontentloaded' });
     const pdf = await page.pdf({
       format: 'A4',
       margin: { top: '20mm', right: '20mm', bottom: '20mm', left: '20mm' },

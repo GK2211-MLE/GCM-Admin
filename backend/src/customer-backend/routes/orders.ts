@@ -240,12 +240,65 @@ export async function customerOrderRoutes(app: FastifyInstance) {
       .limit(1);
 
     const html = generateInvoiceHtml(order, items, customer ?? { name: null, phone: null, email: null });
-    const pdf = await generateInvoicePdf(html);
+    try {
+      const pdf = await generateInvoicePdf(html);
+      reply
+        .header('Content-Type', 'application/pdf')
+        .header('Content-Disposition', `attachment; filename="INV-${order.orderCode}.pdf"`)
+        .header('Cache-Control', 'no-store');
+      return reply.send(pdf);
+    } catch (err) {
+      // Puppeteer can OOM on small hosts. Don't 500 — let the customer
+      // know via a 503 with an explicit hint so the frontend can fall
+      // back to the HTML view (which never crashes).
+      app.log.error({ err, orderCode: order.orderCode }, 'invoice pdf generation failed');
+      return reply.code(503).send({
+        error: 'PDF generation is temporarily unavailable. Use the HTML invoice as a fallback.',
+        fallbackUrl: `/api/customer/orders/${order.id}/invoice.html`,
+      });
+    }
+  });
 
-    reply
-      .header('Content-Type', 'application/pdf')
-      .header('Content-Disposition', `attachment; filename="INV-${order.orderCode}.pdf"`)
-      .header('Cache-Control', 'no-store');
-    return reply.send(pdf);
+  // ── HTML invoice (fallback / view-in-browser) ───────────────
+  // Returns the same brand-styled invoice as text/html. Never invokes
+  // puppeteer, so it always succeeds even when the host is memory-
+  // constrained. Customer can hit Cmd/Ctrl-P to save as PDF from any
+  // browser. Same auth + paid-or-refunded gate as the PDF route.
+  app.get('/:id/invoice.html', { preHandler: [customerAuthGuard] }, async (request, reply) => {
+    const customerId = request.customer!.id;
+    const { id } = request.params as { id: string };
+
+    const isUuid = id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+
+    const [order] = await db
+      .select()
+      .from(orders)
+      .where(and(
+        isUuid ? eq(orders.id, id) : eq(orders.orderCode, id),
+        eq(orders.appUserId, customerId),
+      ))
+      .limit(1);
+
+    if (!order) return reply.code(404).send({ error: 'Order not found' });
+    if (order.paymentStatus !== 'paid' && order.paymentStatus !== 'refunded') {
+      return reply.code(409).send({
+        error: 'Invoice is only available after payment is completed.',
+      });
+    }
+
+    const items = await db
+      .select()
+      .from(orderItems)
+      .where(eq(orderItems.orderId, order.id));
+
+    const [customer] = await db
+      .select({ name: appUsers.name, phone: appUsers.phone, email: appUsers.email })
+      .from(appUsers)
+      .where(eq(appUsers.id, customerId))
+      .limit(1);
+
+    const html = generateInvoiceHtml(order, items, customer ?? { name: null, phone: null, email: null });
+    reply.header('Content-Type', 'text/html; charset=utf-8').header('Cache-Control', 'no-store');
+    return reply.send(html);
   });
 }

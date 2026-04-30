@@ -229,6 +229,9 @@ export const productLocations = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     productId: uuid('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
     locationId: uuid('location_id').notNull().references(() => locations.id, { onDelete: 'cascade' }),
+    // NULL = inherit products.pricePerUnit. Otherwise the price (in cents)
+    // charged at this specific location for this SKU.
+    priceOverrideCents: integer('price_override_cents'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

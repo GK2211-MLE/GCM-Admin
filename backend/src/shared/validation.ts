@@ -99,6 +99,10 @@ export const createProductSchema = z.object({
   // product is only available at the listed locations. Source of truth is
   // the product_locations join table — this field just shapes the request.
   locationIds: z.array(z.string().uuid()).optional(),
+  // Per-location price overrides in cents, keyed by location UUID. Any
+  // location not present in this map (or set to null) inherits the base
+  // pricePerUnit. Only meaningful when locationIds is non-empty.
+  locationPrices: z.record(z.number().int().min(0).nullable()).optional(),
   active: z.boolean().default(true),
   inStock: z.boolean().default(true),
   // New products get 100 units by default so they show up on the

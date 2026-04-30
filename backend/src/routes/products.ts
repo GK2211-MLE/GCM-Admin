@@ -47,12 +47,41 @@ async function getProductLocationIds(productId: string): Promise<string[]> {
   return rows.map((r) => r.locationId);
 }
 
-/** Replace the product_locations rows for a product. */
-async function setProductLocations(productId: string, locationIds: string[]): Promise<void> {
+/**
+ * Lookup per-location price overrides for a product. Returns a map keyed
+ * by locationId; missing keys (or null values) mean "inherit base price".
+ */
+async function getProductLocationPrices(productId: string): Promise<Record<string, number | null>> {
+  const rows = await db
+    .select({
+      locationId: productLocations.locationId,
+      priceOverrideCents: productLocations.priceOverrideCents,
+    })
+    .from(productLocations)
+    .where(eq(productLocations.productId, productId));
+  const out: Record<string, number | null> = {};
+  for (const r of rows) out[r.locationId] = r.priceOverrideCents;
+  return out;
+}
+
+/**
+ * Replace the product_locations rows for a product.
+ * `locationPrices` (optional) maps locationId → price in cents (or null
+ * for "inherit base"). Locations not in the map get null too.
+ */
+async function setProductLocations(
+  productId: string,
+  locationIds: string[],
+  locationPrices?: Record<string, number | null>,
+): Promise<void> {
   await db.delete(productLocations).where(eq(productLocations.productId, productId));
   if (locationIds.length === 0) return;
   await db.insert(productLocations).values(
-    locationIds.map((locationId) => ({ productId, locationId })),
+    locationIds.map((locationId) => ({
+      productId,
+      locationId,
+      priceOverrideCents: locationPrices?.[locationId] ?? null,
+    })),
   );
 }
 
@@ -364,7 +393,40 @@ export async function productRoutes(app: FastifyInstance) {
 
     const rows = await qb;
     // Unwrap the joined { p } shape back to a flat product array.
-    return { products: rows.map((r) => r.p) };
+    const flatRows = rows.map((r) => r.p);
+
+    // Per-location pricing: when a locationId scope is active, swap the
+    // base pricePerUnit for any product that has an override at this
+    // store. One batched lookup keyed by productId so the per-product
+    // map can be applied in memory. NULL override = inherit base.
+    if (effectiveLocationId && flatRows.length > 0) {
+      const productIds = flatRows.map((p) => p.id);
+      const overrides = await db
+        .select({
+          productId: productLocations.productId,
+          priceOverrideCents: productLocations.priceOverrideCents,
+        })
+        .from(productLocations)
+        .where(and(
+          inArray(productLocations.productId, productIds),
+          eq(productLocations.locationId, effectiveLocationId),
+        ));
+      const overrideMap = new Map(
+        overrides
+          .filter((o) => o.priceOverrideCents != null)
+          .map((o) => [o.productId, o.priceOverrideCents as number]),
+      );
+      if (overrideMap.size > 0) {
+        return {
+          products: flatRows.map((p) => {
+            const ov = overrideMap.get(p.id);
+            return ov != null ? { ...p, pricePerUnit: ov } : p;
+          }),
+        };
+      }
+    }
+
+    return { products: flatRows };
   });
 
   // Get single product. Includes the locationIds the product is tagged for
@@ -377,6 +439,7 @@ export async function productRoutes(app: FastifyInstance) {
     if (!product) return reply.code(404).send({ error: 'Product not found' });
 
     const locationIds = await getProductLocationIds(product.id);
+    const locationPrices = await getProductLocationPrices(product.id);
 
     const forcedScope = tryGetForcedScope(request);
     if (forcedScope) {
@@ -384,7 +447,11 @@ export async function productRoutes(app: FastifyInstance) {
       if (!visible) return reply.code(404).send({ error: 'Product not found' });
     }
 
-    return { product: { ...product, locationIds } };
+    // Detail endpoint always returns the BASE price + the locationPrices
+    // map. Admin needs the base price for the edit form; customer-side
+    // price swapping happens in the list endpoint when ?locationId=X is
+    // passed (see flatRows handling above).
+    return { product: { ...product, locationIds, locationPrices } };
   });
 
   // Create product (admin or store_manager).
@@ -455,8 +522,10 @@ export async function productRoutes(app: FastifyInstance) {
         .replace(/^-|-$/g, '');
     }
 
-    // Strip locationIds from the insert payload — it's not a column on products.
-    const { locationIds: _ignoreLocationIds, ...productInsert } = data;
+    // Strip locationIds + locationPrices from the insert payload — they
+    // aren't columns on the products table; they get persisted into the
+    // product_locations join below.
+    const { locationIds: _ignoreLocationIds, locationPrices: _ignoreLocationPrices, ...productInsert } = data;
 
     const [product] = await db
       .insert(products)
@@ -469,7 +538,7 @@ export async function productRoutes(app: FastifyInstance) {
       })
       .returning();
 
-    await setProductLocations(product.id, locationIdsToWrite);
+    await setProductLocations(product.id, locationIdsToWrite, data.locationPrices);
 
     // Auto-create storeInventory rows so the product appears in per-store inventory
     await syncStoreInventory(product.id, locationIdsToWrite, tenantId, {
@@ -488,10 +557,12 @@ export async function productRoutes(app: FastifyInstance) {
         .from(products)
         .where(eq(products.id, product.id))
         .limit(1);
-      return { product: { ...(refreshed ?? product), locationIds: locationIdsToWrite } };
+      const locationPrices = await getProductLocationPrices(product.id);
+      return { product: { ...(refreshed ?? product), locationIds: locationIdsToWrite, locationPrices } };
     }
 
-    return { product: { ...product, locationIds: locationIdsToWrite } };
+    const locationPrices = await getProductLocationPrices(product.id);
+    return { product: { ...product, locationIds: locationIdsToWrite, locationPrices } };
   });
 
   // Update product
@@ -568,7 +639,9 @@ export async function productRoutes(app: FastifyInstance) {
         .replace(/^-|-$/g, '');
     }
 
-    const { locationIds: _ignoreLocationIds, ...productUpdate } = data;
+    // Strip locationIds + locationPrices from the update payload — they
+    // are persisted into product_locations below, not on the products row.
+    const { locationIds: _ignoreLocationIds, locationPrices: _ignoreLocationPrices, ...productUpdate } = data;
 
     const [product] = await db
       .update(products)
@@ -585,13 +658,20 @@ export async function productRoutes(app: FastifyInstance) {
     if (!product) return reply.code(404).send({ error: 'Product not found' });
 
     if (newLocationIds !== null) {
-      await setProductLocations(id, newLocationIds);
+      await setProductLocations(id, newLocationIds, data.locationPrices);
 
       // Auto-create storeInventory rows for newly added locations
       await syncStoreInventory(id, newLocationIds, tenantId, {
         stockQuantity: product.stockQuantity,
         lowStockThreshold: product.lowStockThreshold,
       });
+    } else if (data.locationPrices !== undefined) {
+      // Admin only changed per-location prices, not the location set.
+      // Re-write the existing rows with the new override map.
+      const currentLocs = await getProductLocationIds(id);
+      if (currentLocs.length > 0) {
+        await setProductLocations(id, currentLocs, data.locationPrices);
+      }
     }
 
     // Auto-shift sortOrder so values stay unique 1..N within each category.
@@ -615,7 +695,8 @@ export async function productRoutes(app: FastifyInstance) {
 
     const [refreshed] = await db.select().from(products).where(eq(products.id, id)).limit(1);
     const finalLocationIds = await getProductLocationIds(id);
-    return { product: { ...(refreshed ?? product), locationIds: finalLocationIds } };
+    const finalLocationPrices = await getProductLocationPrices(id);
+    return { product: { ...(refreshed ?? product), locationIds: finalLocationIds, locationPrices: finalLocationPrices } };
   });
 
   // Delete product

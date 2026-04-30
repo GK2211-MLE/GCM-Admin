@@ -492,6 +492,12 @@ WHERE p.location_id IS NOT NULL
 
 DO $$ BEGIN ALTER TABLE notifications ADD COLUMN location_id UUID REFERENCES locations(id); EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 
+-- Per-location price override on the product_locations join. NULL means
+-- "use the product's base price_per_unit". Lets admin charge $13.99 for
+-- the same SKU in Texas and $14.99 in Illinois without duplicating
+-- products. Stored in cents (matches products.price_per_unit).
+DO $$ BEGIN ALTER TABLE product_locations ADD COLUMN price_override_cents INTEGER; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+
 -- Backfill empty product slugs. Products inserted via early admin flows
 -- (or test scaffolding) sometimes ended up with an empty slug, which makes
 -- the customer-side /shop/[slug] URL 404. This one-liner regenerates a

@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/dialog';
 import { LoadingSpinner } from '@/components/feedback/LoadingSpinner';
 import { EmptyState } from '@/components/feedback/EmptyState';
+import { Switch } from '@/components/ui/switch';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -356,6 +357,41 @@ export function InventoryPage() {
     updatePrice.mutate({ productId, pricePerUnit: priceInCents });
   }, [updatePrice]);
 
+  // Per-store availability toggle. Only meaningful when a specific store
+  // is selected (storeFilter !== 'all'). Flipping OFF removes the SKU
+  // from this store's catalog — the backend handles the all-locations
+  // fork case so a previously catalog-wide product becomes "everywhere
+  // except this store" cleanly.
+  const toggleAvailability = useMutation({
+    mutationFn: async ({ productId, available }: { productId: string; available: boolean }) => {
+      if (storeFilter === 'all') throw new Error('Pick a specific store first');
+      const { data } = await apiClient.post(
+        `/products/${productId}/availability/${storeFilter}`,
+        { available },
+      );
+      return data;
+    },
+    onSuccess: (_d, vars) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all });
+      toast.success(
+        vars.available
+          ? 'Product enabled at this store'
+          : 'Product disabled at this store',
+      );
+    },
+    onError: (err: any) => {
+      const msg = err?.response?.data?.error || 'Could not update availability';
+      toast.error(msg);
+    },
+  });
+
+  const handleAvailabilityToggle = useCallback(
+    (productId: string, available: boolean) => {
+      toggleAvailability.mutate({ productId, available });
+    },
+    [toggleAvailability],
+  );
+
   // ── Table columns ─────────────────────────────────────────────────────────
   const columns: ColumnDef<InventoryItem, unknown>[] = useMemo(() => [
     {
@@ -428,6 +464,31 @@ export function InventoryPage() {
         return <Badge variant={variant}>{label}</Badge>;
       },
     },
+    // Per-store availability toggle — only when a specific store is
+    // selected. When storeFilter === 'all' we hide the column entirely
+    // (no meaningful single-store action to take). Visible rows here
+    // are by definition currently available at the selected store, so
+    // the switch starts ON; toggling OFF removes the SKU from this
+    // store's catalog (the row will disappear on the next refetch).
+    ...(storeFilter !== 'all'
+      ? ([
+          {
+            id: 'availability',
+            header: 'Available here',
+            size: 130,
+            cell: ({ row }) => (
+              <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+                <Switch
+                  checked={true}
+                  onCheckedChange={(checked) => handleAvailabilityToggle(row.original.id, checked)}
+                  disabled={toggleAvailability.isPending}
+                  aria-label="Toggle availability at this store"
+                />
+              </div>
+            ),
+          },
+        ] as ColumnDef<InventoryItem, unknown>[])
+      : []),
     {
       id: 'actions',
       header: '',
@@ -473,7 +534,7 @@ export function InventoryPage() {
         </div>
       ),
     },
-  ], [handleStockSave, handleThresholdSave, navigate]);
+  ], [handleStockSave, handleThresholdSave, navigate, storeFilter, handleAvailabilityToggle, toggleAvailability.isPending]);
 
   // ── Render ────────────────────────────────────────────────────────────────
   if (isLoading) return <LoadingSpinner className="h-64" />;

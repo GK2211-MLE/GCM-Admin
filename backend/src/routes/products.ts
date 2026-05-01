@@ -831,4 +831,117 @@ export async function productRoutes(app: FastifyInstance) {
     if (!product) return reply.code(404).send({ error: 'Product not found' });
     return { product };
   });
+
+  // ── Per-store availability toggle ────────────────────────────────────
+  // Flips a single product's availability at one specific location, used
+  // by the Inventory page row toggle. Handles all 4 transitions cleanly:
+  //
+  //   - Was catalog-wide (no rows), now turned OFF here:
+  //       fork into specific-locations covering ALL OTHER active stores.
+  //       Net effect: still available everywhere except this one.
+  //   - Was specific-locations including this store, turned OFF here:
+  //       just delete the (productId, locationId) row.
+  //   - Was specific-locations EXCLUDING this store, turned ON:
+  //       insert a (productId, locationId) row.
+  //   - Was catalog-wide, turned ON: no-op (already available everywhere).
+  app.post(
+    '/:id/availability/:locationId',
+    { preHandler: [authGuard] },
+    async (request, reply) => {
+      const tenantId = getTenantId(request);
+      const { id, locationId } = request.params as { id: string; locationId: string };
+      const { available } = request.body as { available: boolean };
+      const role = request.user!.role;
+
+      if (role === ROLES.STORE_STAFF) {
+        return reply.code(403).send({ error: 'Store staff cannot toggle product availability' });
+      }
+      if (role !== ROLES.ADMIN) {
+        // Non-admin: only allowed to toggle products at their own assigned location.
+        const myLoc = request.user!.assignedLocationId;
+        if (!myLoc || myLoc !== locationId) {
+          return reply.code(403).send({ error: 'Cannot toggle a different location' });
+        }
+      }
+
+      // Verify the product belongs to this tenant.
+      const [product] = await db
+        .select({ id: products.id })
+        .from(products)
+        .where(and(eq(products.id, id), eq(products.tenantId, tenantId)))
+        .limit(1);
+      if (!product) return reply.code(404).send({ error: 'Product not found' });
+
+      // Verify the location belongs to this tenant.
+      const [loc] = await db
+        .select({ id: locations.id })
+        .from(locations)
+        .where(and(eq(locations.id, locationId), eq(locations.tenantId, tenantId)))
+        .limit(1);
+      if (!loc) return reply.code(400).send({ error: 'Invalid location for this tenant' });
+
+      const currentLocs = await getProductLocationIds(id);
+      const wasCatalogWide = currentLocs.length === 0;
+      const wasIncludedHere = currentLocs.includes(locationId);
+
+      if (available) {
+        if (wasCatalogWide) {
+          // Already available everywhere — nothing to do.
+          return { product: { id, locationIds: [] }, changed: false };
+        }
+        if (wasIncludedHere) {
+          return { product: { id, locationIds: currentLocs }, changed: false };
+        }
+        // Add this location to the existing specific-locations set.
+        const next = [...currentLocs, locationId];
+        await setProductLocations(id, next);
+        // Make sure store_inventory rows reflect the new location set
+        // (defaults are 100 stock — same as initial product creation).
+        const [base] = await db.select().from(products).where(eq(products.id, id)).limit(1);
+        await syncStoreInventory(id, next, tenantId, {
+          stockQuantity: base?.stockQuantity ?? 100,
+          lowStockThreshold: base?.lowStockThreshold ?? 10,
+        });
+        return { product: { id, locationIds: next }, changed: true };
+      }
+
+      // available === false
+      if (wasCatalogWide) {
+        // Fork: list every active location in this tenant, exclude this one.
+        const allActive = await db
+          .select({ id: locations.id })
+          .from(locations)
+          .where(and(eq(locations.tenantId, tenantId), eq(locations.active, true)));
+        const next = allActive.map((l) => l.id).filter((lid) => lid !== locationId);
+        if (next.length === 0) {
+          // Edge case: only one active location and admin is turning the
+          // product off there. We deliberately don't end up with an
+          // empty product_locations row set (which would mean
+          // "available everywhere" — the opposite of intent). Instead
+          // we keep the catalog-wide state and surface a 409 so the
+          // admin sees what's happening.
+          return reply.code(409).send({
+            error: 'Cannot disable a catalog-wide product at the only active location.',
+          });
+        }
+        await setProductLocations(id, next);
+        const [base] = await db.select().from(products).where(eq(products.id, id)).limit(1);
+        await syncStoreInventory(id, next, tenantId, {
+          stockQuantity: base?.stockQuantity ?? 100,
+          lowStockThreshold: base?.lowStockThreshold ?? 10,
+        });
+        return { product: { id, locationIds: next }, changed: true };
+      }
+      if (!wasIncludedHere) {
+        // Already not available here — nothing to do.
+        return { product: { id, locationIds: currentLocs }, changed: false };
+      }
+      // Just drop this location from the existing set.
+      const next = currentLocs.filter((lid) => lid !== locationId);
+      await setProductLocations(id, next);
+      // Don't delete storeInventory row — keep the historical stock
+      // count so re-enabling later restores the same number.
+      return { product: { id, locationIds: next }, changed: true };
+    },
+  );
 }

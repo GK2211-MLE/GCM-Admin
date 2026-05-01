@@ -223,6 +223,24 @@ export const rolePermissions = pgTable(
 // both the admin product list (filtered by the user's assigned location for
 // non-admin roles) and the customer-facing storefront (filtered by the
 // active store the customer selected).
+// Mirrors productLocations but for category-level visibility. Same
+// "zero rows = catalog-wide / one or more rows = explicit allow-list"
+// semantics. Lets admin hide a whole category at one store while
+// keeping it elsewhere — independent of per-product visibility.
+export const categoryLocations = pgTable(
+  'category_locations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    categoryId: uuid('category_id').notNull().references(() => categories.id, { onDelete: 'cascade' }),
+    locationId: uuid('location_id').notNull().references(() => locations.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('category_locations_unique_idx').on(t.categoryId, t.locationId),
+    index('category_locations_location_idx').on(t.locationId),
+  ],
+);
+
 export const productLocations = pgTable(
   'product_locations',
   {

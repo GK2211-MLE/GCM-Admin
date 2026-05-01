@@ -498,6 +498,19 @@ DO $$ BEGIN ALTER TABLE notifications ADD COLUMN location_id UUID REFERENCES loc
 -- products. Stored in cents (matches products.price_per_unit).
 DO $$ BEGIN ALTER TABLE product_locations ADD COLUMN price_override_cents INTEGER; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 
+-- Per-location category availability. Same semantics as product_locations:
+-- zero rows = "available at all locations" (catalog-wide). One or more
+-- rows = explicit allow-list. Lets admin hide a whole category at one
+-- store while keeping it elsewhere.
+CREATE TABLE IF NOT EXISTS category_locations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+  location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS category_locations_unique_idx ON category_locations(category_id, location_id);
+CREATE INDEX IF NOT EXISTS category_locations_location_idx ON category_locations(location_id);
+
 -- Backfill empty product slugs. Products inserted via early admin flows
 -- (or test scaffolding) sometimes ended up with an empty slug, which makes
 -- the customer-side /shop/[slug] URL 404. This one-liner regenerates a

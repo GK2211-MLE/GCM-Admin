@@ -75,11 +75,17 @@ function InlineEditCell({
   onSave,
   min = 0,
   step,
+  readOnly = false,
+  readOnlyHint,
 }: {
   value: number;
   onSave: (newValue: number) => void;
   min?: number;
   step?: number;
+  /** When true, render as plain text — clicking does not enter edit mode. */
+  readOnly?: boolean;
+  /** Tooltip shown when hovering a read-only cell. */
+  readOnlyHint?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(String(value));
@@ -104,6 +110,17 @@ function InlineEditCell({
     }
     setEditing(false);
   };
+
+  if (readOnly) {
+    return (
+      <span
+        className="px-2 py-1 text-sm font-medium text-[var(--text-secondary)] cursor-not-allowed"
+        title={readOnlyHint}
+      >
+        {value}
+      </span>
+    );
+  }
 
   if (editing) {
     return (
@@ -441,6 +458,11 @@ export function InventoryPage() {
         <InlineEditCell
           value={row.original.stockQuantity}
           onSave={(newVal) => handleStockSave(row.original.id, newVal)}
+          // Stock is per-store. Editing in "all stores" mode used to
+          // broadcast the same number to every store_inventory row,
+          // which is almost never what admin meant. Lock it.
+          readOnly={storeFilter === 'all'}
+          readOnlyHint={storeFilter === 'all' ? 'Pick a store from the filter to edit stock' : undefined}
         />
       ),
     },
@@ -451,6 +473,8 @@ export function InventoryPage() {
         <InlineEditCell
           value={row.original.lowStockThreshold}
           onSave={(newVal) => handleThresholdSave(row.original.id, newVal)}
+          readOnly={storeFilter === 'all'}
+          readOnlyHint={storeFilter === 'all' ? 'Pick a store from the filter to edit thresholds' : undefined}
         />
       ),
     },
@@ -499,8 +523,9 @@ export function InventoryPage() {
             type="button"
             variant="ghost"
             className="h-8 w-8 p-0"
+            disabled={storeFilter === 'all'}
             onClick={(e) => { e.stopPropagation(); handleStockSave(row.original.id, row.original.stockQuantity + 1); }}
-            title="Add 1"
+            title={storeFilter === 'all' ? 'Pick a store to edit stock' : 'Add 1'}
           >
             <Plus className="h-4 w-4" />
           </Button>
@@ -508,8 +533,9 @@ export function InventoryPage() {
             type="button"
             variant="ghost"
             className="h-8 w-8 p-0"
+            disabled={storeFilter === 'all'}
             onClick={(e) => { e.stopPropagation(); handleStockSave(row.original.id, Math.max(0, row.original.stockQuantity - 1)); }}
-            title="Remove 1"
+            title={storeFilter === 'all' ? 'Pick a store to edit stock' : 'Remove 1'}
           >
             <Minus className="h-4 w-4" />
           </Button>
@@ -517,8 +543,9 @@ export function InventoryPage() {
             type="button"
             variant="ghost"
             className="h-8 w-8 p-0"
+            disabled={storeFilter === 'all'}
             onClick={(e) => { e.stopPropagation(); setAdjustTarget(row.original); }}
-            title="Adjust stock"
+            title={storeFilter === 'all' ? 'Pick a store to adjust stock' : 'Adjust stock'}
           >
             <Package className="h-4 w-4" />
           </Button>
@@ -649,10 +676,20 @@ export function InventoryPage() {
         </div>
       </div>
 
-      {storeFilter !== 'all' && (
+      {storeFilter !== 'all' ? (
         <div className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
           <MapPin className="h-4 w-4" />
           <span>Showing inventory for: <strong>{(locationsData ?? []).find(l => l.id === storeFilter)?.name}</strong></span>
+        </div>
+      ) : (
+        // Stock + threshold edits are intentionally disabled in this view.
+        // The previous behaviour (broadcast the same number to every
+        // store_inventory row) was an accidental foot-gun.
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300/40 bg-amber-50/40 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/5 dark:text-amber-200">
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          <span>
+            Stock and thresholds are read-only in this view. Pick a specific store from the filter above to edit per-store inventory.
+          </span>
         </div>
       )}
 

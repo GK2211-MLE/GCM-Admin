@@ -3,8 +3,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef } from '@tanstack/react-table';
 import { toast } from 'sonner';
 import {
-  Plus, Pencil, Trash2, ImageIcon, Grid3X3, List, GripVertical,
+  Plus, Pencil, Trash2, ImageIcon, Grid3X3, List, GripVertical, MapPin,
 } from 'lucide-react';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 
 import { apiClient } from '@/lib/api-client';
 import { queryKeys } from '@/lib/query-keys';
@@ -35,6 +38,14 @@ interface Category {
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
+  // Per-location availability. [] = available everywhere (catalog-wide);
+  // non-empty = explicit allow-list of location UUIDs.
+  locationIds?: string[];
+}
+
+interface LocationOption {
+  id: string;
+  name: string;
 }
 
 interface FormState {
@@ -62,6 +73,9 @@ function toSlug(name: string): string {
 export function CatalogPage() {
   const queryClient = useQueryClient();
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
+  // Store filter — when set to a specific store id, the table shows an
+  // "Available here" toggle column for per-location category visibility.
+  const [storeFilter, setStoreFilter] = useState<string>('all');
 
   // Dialog state
   const [showDialog, setShowDialog] = useState(false);
@@ -71,6 +85,15 @@ export function CatalogPage() {
 
   // Delete dialog
   const [deleteTarget, setDeleteTarget] = useState<Category | null>(null);
+
+  // Locations list for the filter dropdown
+  const { data: locationsData } = useQuery({
+    queryKey: queryKeys.settings.locations(),
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ locations: LocationOption[] }>('/locations/all');
+      return data.locations;
+    },
+  });
 
   // ── Queries ──────────────────────────────────────────────────────────────
 
@@ -134,6 +157,39 @@ export function CatalogPage() {
       toast.success('Category status updated');
     },
   });
+
+  // Per-store category availability. Mirrors the products one — admin
+  // toggles whether a category is visible at the currently-selected
+  // store. Empty locationIds = catalog-wide.
+  const toggleCategoryAvailability = useMutation({
+    mutationFn: async ({ categoryId, available }: { categoryId: string; available: boolean }) => {
+      if (storeFilter === 'all') throw new Error('Pick a specific store first');
+      const { data } = await apiClient.post(
+        `/categories/${categoryId}/availability/${storeFilter}`,
+        { available },
+      );
+      return data;
+    },
+    onSuccess: (_d, vars) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.catalog.all });
+      toast.success(
+        vars.available
+          ? 'Category enabled at this store'
+          : 'Category disabled at this store',
+      );
+    },
+    onError: (err: any) => {
+      const msg = err?.response?.data?.error || 'Could not update availability';
+      toast.error(msg);
+    },
+  });
+
+  const handleAvailabilityToggle = useCallback(
+    (categoryId: string, available: boolean) => {
+      toggleCategoryAvailability.mutate({ categoryId, available });
+    },
+    [toggleCategoryAvailability],
+  );
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -245,6 +301,33 @@ export function CatalogPage() {
         </Badge>
       ),
     },
+    // Per-store availability toggle. Visible only when a specific store
+    // is selected. Toggle reflects whether THIS category is visible at
+    // THAT store: catalog-wide ([] locationIds) shows ON; explicit
+    // list shows ON if locationIds includes the store, OFF otherwise.
+    ...(storeFilter !== 'all'
+      ? ([
+          {
+            id: 'availability',
+            header: 'Available here',
+            size: 130,
+            cell: ({ row }) => {
+              const ids = row.original.locationIds ?? [];
+              const checked = ids.length === 0 || ids.includes(storeFilter);
+              return (
+                <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+                  <Switch
+                    checked={checked}
+                    onCheckedChange={(c) => handleAvailabilityToggle(row.original.id, c)}
+                    disabled={toggleCategoryAvailability.isPending}
+                    aria-label="Toggle category availability at this store"
+                  />
+                </div>
+              );
+            },
+          },
+        ] as ColumnDef<Category, unknown>[])
+      : []),
     {
       id: 'actions',
       header: '',
@@ -269,7 +352,7 @@ export function CatalogPage() {
         </div>
       ),
     },
-  ], [openEdit]);
+  ], [openEdit, storeFilter, handleAvailabilityToggle, toggleCategoryAvailability.isPending]);
 
   // ── Render ───────────────────────────────────────────────────────────────
 
@@ -288,8 +371,27 @@ export function CatalogPage() {
         }
       />
 
-      {/* View toggle */}
-      <div className="flex items-center justify-end">
+      {/* Store filter + view toggle */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <MapPin className="h-4 w-4 text-[var(--text-tertiary)]" />
+          <Select value={storeFilter} onValueChange={(v) => { setStoreFilter(v); setViewMode('table'); }}>
+            <SelectTrigger className="w-[260px]">
+              <SelectValue placeholder="Filter by store" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Stores (Global)</SelectItem>
+              {(locationsData ?? []).map((loc) => (
+                <SelectItem key={loc.id} value={loc.id}>{loc.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {storeFilter !== 'all' && (
+            <span className="text-xs text-[var(--text-tertiary)] hidden md:inline">
+              Toggle the column on each row to enable / disable a category at this store.
+            </span>
+          )}
+        </div>
         <div className="flex rounded-lg border border-[var(--border-default)]">
           <Button
             variant={viewMode === 'grid' ? 'secondary' : 'ghost'}

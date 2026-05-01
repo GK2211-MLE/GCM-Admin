@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import { eq, ne, and, asc, count } from 'drizzle-orm';
+import { eq, ne, and, asc, count, sql, inArray } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { categories, products } from '../db/schema.js';
+import { categories, products, categoryLocations, locations } from '../db/schema.js';
 import { authGuard } from '../middleware/auth.js';
 import { getTenantId } from '../middleware/tenant.js';
-import { createCategorySchema, updateCategorySchema } from '../shared/index.js';
+import { createCategorySchema, updateCategorySchema, ROLES } from '../shared/index.js';
 
 function toSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
@@ -56,17 +56,28 @@ export async function categoryRoutes(app: FastifyInstance) {
   // gets serialized). Two queries is bulletproof and at our scale (≤ 20
   // categories, ≤ 200 products) the cost is negligible.
   app.get('/', async (request) => {
-    const query = request.query as { tenantId?: string; includeInactive?: string };
+    const query = request.query as { tenantId?: string; includeInactive?: string; locationId?: string };
     // Default behaviour for the customer-facing site: hide categories the
     // admin has marked inactive. The admin catalog page passes
     // ?includeInactive=1 to see everything.
     const includeInactive =
       query.includeInactive === '1' || query.includeInactive === 'true';
+    const locationId = query.locationId || null;
 
     const baseConds = (extra?: ReturnType<typeof eq>) => {
       const parts: ReturnType<typeof eq>[] = [];
       if (query.tenantId) parts.push(eq(categories.tenantId, query.tenantId));
       if (!includeInactive) parts.push(eq(categories.active, true));
+      // Per-location category visibility: a category is visible at a
+      // location when EITHER it has zero rows in category_locations
+      // (catalog-wide default) OR it has a row for this location.
+      // Mirrors the product_locations rule.
+      if (locationId) {
+        parts.push(sql`(
+          NOT EXISTS (SELECT 1 FROM category_locations cl WHERE cl.category_id = ${categories.id})
+          OR EXISTS (SELECT 1 FROM category_locations cl WHERE cl.category_id = ${categories.id} AND cl.location_id = ${locationId})
+        )` as any);
+      }
       if (extra) parts.push(extra);
       return parts.length === 0 ? undefined : (parts.length === 1 ? parts[0] : and(...parts));
     };
@@ -76,26 +87,27 @@ export async function categoryRoutes(app: FastifyInstance) {
       ? await db.select().from(categories).where(catWhere).orderBy(asc(categories.sortOrder))
       : await db.select().from(categories).orderBy(asc(categories.sortOrder));
 
-    // Aggregate active product counts grouped by (tenantId, category-slug)
-    const countRows = query.tenantId
-      ? await db
-          .select({
-            tenantId: products.tenantId,
-            slug: products.category,
-            count: count(),
-          })
-          .from(products)
-          .where(and(eq(products.tenantId, query.tenantId), eq(products.active, true)))
-          .groupBy(products.tenantId, products.category)
-      : await db
-          .select({
-            tenantId: products.tenantId,
-            slug: products.category,
-            count: count(),
-          })
-          .from(products)
-          .where(eq(products.active, true))
-          .groupBy(products.tenantId, products.category);
+    // Aggregate active product counts grouped by (tenantId, category-slug).
+    // When a locationId is in scope, also restrict the count to products
+    // that are actually visible at that store — so the customer doesn't
+    // see "Lamb (8 products)" pill that returns nothing when clicked.
+    const productConds: any[] = [eq(products.active, true)];
+    if (query.tenantId) productConds.push(eq(products.tenantId, query.tenantId));
+    if (locationId) {
+      productConds.push(sql`(
+        NOT EXISTS (SELECT 1 FROM product_locations pl WHERE pl.product_id = ${products.id})
+        OR EXISTS (SELECT 1 FROM product_locations pl WHERE pl.product_id = ${products.id} AND pl.location_id = ${locationId})
+      )` as any);
+    }
+    const countRows = await db
+      .select({
+        tenantId: products.tenantId,
+        slug: products.category,
+        count: count(),
+      })
+      .from(products)
+      .where(and(...productConds))
+      .groupBy(products.tenantId, products.category);
 
     // Build a fast lookup keyed by `${tenantId}:${slug}`
     const countMap = new Map<string, number>();
@@ -103,9 +115,31 @@ export async function categoryRoutes(app: FastifyInstance) {
       countMap.set(`${r.tenantId}:${r.slug}`, Number(r.count));
     }
 
+    // Per-category location-availability rows (only meaningful for admin
+    // — customer doesn't render anything off this field). One query
+    // grouped by categoryId, then merged into each row.
+    const allLocRows = catRows.length > 0
+      ? await db
+          .select({
+            categoryId: categoryLocations.categoryId,
+            locationId: categoryLocations.locationId,
+          })
+          .from(categoryLocations)
+          .where(inArray(categoryLocations.categoryId, catRows.map((c) => c.id)))
+      : [];
+    const locByCategory = new Map<string, string[]>();
+    for (const r of allLocRows) {
+      const arr = locByCategory.get(r.categoryId) ?? [];
+      arr.push(r.locationId);
+      locByCategory.set(r.categoryId, arr);
+    }
+
     const result = catRows.map((c) => ({
       ...c,
       productCount: countMap.get(`${c.tenantId}:${c.slug}`) ?? 0,
+      // Empty array = available everywhere (catalog-wide). Otherwise
+      // explicit allow-list of location UUIDs.
+      locationIds: locByCategory.get(c.id) ?? [],
     }));
 
     return { categories: result };
@@ -258,5 +292,105 @@ export async function categoryRoutes(app: FastifyInstance) {
       .returning();
 
     return { category };
+  });
+
+  // ── Per-store category availability toggle ───────────────────────
+  // Mirrors POST /products/:id/availability/:locationId. Same 4-state
+  // transition handling via the same catalog-wide ↔ specific-locations
+  // semantics. Lets admin hide a whole category at one store while
+  // keeping it elsewhere — independent of per-product visibility.
+  app.post(
+    '/:id/availability/:locationId',
+    { preHandler: [authGuard] },
+    async (request, reply) => {
+      const tenantId = getTenantId(request);
+      const { id, locationId } = request.params as { id: string; locationId: string };
+      const { available } = request.body as { available: boolean };
+      const role = request.user!.role;
+
+      if (role !== ROLES.ADMIN) {
+        // Categories are tenant-wide settings; only admin can toggle.
+        return reply.code(403).send({ error: 'Only admin can toggle category availability' });
+      }
+
+      // Verify category belongs to tenant.
+      const [cat] = await db
+        .select({ id: categories.id })
+        .from(categories)
+        .where(and(eq(categories.id, id), eq(categories.tenantId, tenantId)))
+        .limit(1);
+      if (!cat) return reply.code(404).send({ error: 'Category not found' });
+
+      // Verify location belongs to tenant.
+      const [loc] = await db
+        .select({ id: locations.id })
+        .from(locations)
+        .where(and(eq(locations.id, locationId), eq(locations.tenantId, tenantId)))
+        .limit(1);
+      if (!loc) return reply.code(400).send({ error: 'Invalid location for this tenant' });
+
+      // Read current state.
+      const currentRows = await db
+        .select({ locationId: categoryLocations.locationId })
+        .from(categoryLocations)
+        .where(eq(categoryLocations.categoryId, id));
+      const currentLocs = currentRows.map((r) => r.locationId);
+      const wasCatalogWide = currentLocs.length === 0;
+      const wasIncludedHere = currentLocs.includes(locationId);
+
+      if (available) {
+        if (wasCatalogWide || wasIncludedHere) {
+          return { categoryId: id, locationIds: currentLocs, changed: false };
+        }
+        // Add this location to the existing specific-locations set.
+        await db.insert(categoryLocations).values({ categoryId: id, locationId });
+        return { categoryId: id, locationIds: [...currentLocs, locationId], changed: true };
+      }
+
+      // available === false
+      if (wasCatalogWide) {
+        // Fork: list every active location in this tenant, exclude this one.
+        const allActive = await db
+          .select({ id: locations.id })
+          .from(locations)
+          .where(and(eq(locations.tenantId, tenantId), eq(locations.active, true)));
+        const next = allActive.map((l) => l.id).filter((lid) => lid !== locationId);
+        if (next.length === 0) {
+          return reply.code(409).send({
+            error: 'Cannot disable a catalog-wide category at the only active location.',
+          });
+        }
+        await db.insert(categoryLocations).values(
+          next.map((lid) => ({ categoryId: id, locationId: lid })),
+        );
+        return { categoryId: id, locationIds: next, changed: true };
+      }
+      if (!wasIncludedHere) {
+        return { categoryId: id, locationIds: currentLocs, changed: false };
+      }
+      // Drop just this row.
+      await db
+        .delete(categoryLocations)
+        .where(and(eq(categoryLocations.categoryId, id), eq(categoryLocations.locationId, locationId)));
+      return { categoryId: id, locationIds: currentLocs.filter((l) => l !== locationId), changed: true };
+    },
+  );
+
+  // GET /:id/locations — return the location-availability set for one
+  // category. Admin uses this to render checked/unchecked toggles.
+  app.get('/:id/locations', { preHandler: [authGuard] }, async (request, reply) => {
+    const tenantId = getTenantId(request);
+    const { id } = request.params as { id: string };
+    const [cat] = await db
+      .select({ id: categories.id })
+      .from(categories)
+      .where(and(eq(categories.id, id), eq(categories.tenantId, tenantId)))
+      .limit(1);
+    if (!cat) return reply.code(404).send({ error: 'Category not found' });
+    const rows = await db
+      .select({ locationId: categoryLocations.locationId })
+      .from(categoryLocations)
+      .where(eq(categoryLocations.categoryId, id));
+    return { categoryId: id, locationIds: rows.map((r) => r.locationId) };
   });
 }

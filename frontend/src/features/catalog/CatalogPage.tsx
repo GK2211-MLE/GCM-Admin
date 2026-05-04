@@ -491,9 +491,13 @@ export function CatalogPage() {
         <DataTable columns={columns} data={categories} pageSize={20} />
       )}
 
-      {/* Add / Edit Dialog */}
+      {/* Add / Edit Dialog. Body uses max-h + overflow-y so the
+          location checkbox list (and the form generally) stays
+          scrollable on shorter viewports — previously the dialog ran
+          off the bottom of the screen with no way to reach Active /
+          Save when 'Specific locations' was selected with 8+ stores. */}
       <Dialog open={showDialog} onOpenChange={(open) => { if (!open) closeDialog(); }}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>{editTarget ? 'Edit Category' : 'Add Category'}</DialogTitle>
             <DialogDescription>
@@ -501,7 +505,7 @@ export function CatalogPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
+          <div className="space-y-4 py-2 overflow-y-auto pr-1 -mr-1 flex-1">
             {/* Name */}
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-[var(--text-primary)]">Name *</label>

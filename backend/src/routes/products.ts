@@ -944,4 +944,49 @@ export async function productRoutes(app: FastifyInstance) {
       return { product: { id, locationIds: next }, changed: true };
     },
   );
+
+  // ── Bulk-apply Halal certification to many products at once ────────
+  // Powers the new admin "Certifications" page. Admin enters cert
+  // details once, picks N products, hits Apply — every selected
+  // product gets isHalal=true + the same halalInfo blob written.
+  // Tenant-scoped so an admin can never write into a sibling tenant
+  // even if they fluke a foreign productId.
+  app.post('/halal-certify', { preHandler: [authGuard] }, async (request, reply) => {
+    const tenantId = getTenantId(request);
+    const role = request.user!.role;
+    if (role !== ROLES.ADMIN) {
+      return reply.code(403).send({ error: 'Only admin can bulk-certify products' });
+    }
+    const body = request.body as {
+      productIds?: string[];
+      halalInfo?: Record<string, unknown>;
+      isHalal?: boolean;
+    };
+    if (!Array.isArray(body.productIds) || body.productIds.length === 0) {
+      return reply.code(400).send({ error: 'productIds must be a non-empty array' });
+    }
+    const isHalal = body.isHalal !== false;
+    const halalInfo = body.halalInfo ?? {};
+
+    // Validate every productId belongs to this tenant.
+    const valid = await db
+      .select({ id: products.id })
+      .from(products)
+      .where(and(eq(products.tenantId, tenantId), inArray(products.id, body.productIds)));
+    const validIds = valid.map((r) => r.id);
+    if (validIds.length === 0) {
+      return reply.code(400).send({ error: 'None of the products belong to this tenant' });
+    }
+
+    await db
+      .update(products)
+      .set({ isHalal, halalInfo, updatedAt: new Date() })
+      .where(and(eq(products.tenantId, tenantId), inArray(products.id, validIds)));
+
+    return {
+      updatedCount: validIds.length,
+      requestedCount: body.productIds.length,
+      skipped: body.productIds.length - validIds.length,
+    };
+  });
 }

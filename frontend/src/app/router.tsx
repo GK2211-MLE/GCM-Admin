@@ -20,6 +20,7 @@ const PaymentListPage = lazy(() => import('@/features/payments/PaymentListPage')
 const FulfillmentPage = lazy(() => import('@/features/fulfillment/FulfillmentPage').then(m => ({ default: m.FulfillmentPage })));
 const InventoryPage = lazy(() => import('@/features/inventory/InventoryPage').then(m => ({ default: m.InventoryPage })));
 const CatalogPage = lazy(() => import('@/features/catalog/CatalogPage').then(m => ({ default: m.CatalogPage })));
+const CertificationsPage = lazy(() => import('@/features/certifications/CertificationsPage').then(m => ({ default: m.CertificationsPage })));
 const PromotionListPage = lazy(() => import('@/features/promotions/PromotionListPage').then(m => ({ default: m.PromotionListPage })));
 const AnalyticsPage = lazy(() => import('@/features/analytics/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
 const NotificationPage = lazy(() => import('@/features/notifications/NotificationPage').then(m => ({ default: m.NotificationPage })));
@@ -62,6 +63,7 @@ export function AppRouter() {
           <Route path="/fulfillment" element={<SuspenseWrapper><FulfillmentPage /></SuspenseWrapper>} />
           <Route path="/inventory" element={<SuspenseWrapper><RequirePermission pageKey="inventory"><InventoryPage /></RequirePermission></SuspenseWrapper>} />
           <Route path="/catalog" element={<SuspenseWrapper><RequirePermission pageKey="catalog"><CatalogPage /></RequirePermission></SuspenseWrapper>} />
+          <Route path="/certifications" element={<SuspenseWrapper><RequirePermission pageKey="catalog"><CertificationsPage /></RequirePermission></SuspenseWrapper>} />
           <Route path="/promotions" element={<SuspenseWrapper><RequirePermission pageKey="promotions"><PromotionListPage /></RequirePermission></SuspenseWrapper>} />
           <Route path="/analytics" element={<SuspenseWrapper><RequirePermission pageKey="analytics"><AnalyticsPage /></RequirePermission></SuspenseWrapper>} />
           <Route path="/notifications" element={<SuspenseWrapper><RequirePermission pageKey="notifications"><NotificationPage /></RequirePermission></SuspenseWrapper>} />

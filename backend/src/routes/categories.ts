@@ -10,6 +10,17 @@ function toSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 }
 
+// Replace the category_locations rows for a category. Mirrors
+// setProductLocations in routes/products.ts. Empty array = catalog-wide
+// (no rows). Otherwise the row set is rewritten to match exactly.
+async function setCategoryLocations(categoryId: string, locationIds: string[]): Promise<void> {
+  await db.delete(categoryLocations).where(eq(categoryLocations.categoryId, categoryId));
+  if (locationIds.length === 0) return;
+  await db.insert(categoryLocations).values(
+    locationIds.map((locationId) => ({ categoryId, locationId })),
+  );
+}
+
 /**
  * Renumber categories within a tenant to a tight 1..N sequence,
  * placing `categoryId` at `position` (1-indexed). Other categories
@@ -165,10 +176,18 @@ export async function categoryRoutes(app: FastifyInstance) {
 
     const slug = data.slug || toSlug(data.name);
 
+    // Strip locationIds — it's not a column on categories.
+    const { locationIds: requestedLocs, ...catInsert } = data;
+
     const [category] = await db
       .insert(categories)
-      .values({ ...data, slug, tenantId })
+      .values({ ...catInsert, slug, tenantId })
       .returning();
+
+    // Persist per-location availability if specified.
+    if (requestedLocs && requestedLocs.length > 0) {
+      await setCategoryLocations(category.id, requestedLocs);
+    }
 
     // Slot the new category into the requested sortOrder, shifting the
     // rest down by 1. Schema default (0) lands at the top; admin can
@@ -180,7 +199,7 @@ export async function categoryRoutes(app: FastifyInstance) {
       .from(categories)
       .where(eq(categories.id, category.id))
       .limit(1);
-    return { category: refreshed ?? category };
+    return { category: refreshed ?? category, locationIds: requestedLocs ?? [] };
   });
 
   // Update category (auth required)
@@ -196,10 +215,13 @@ export async function categoryRoutes(app: FastifyInstance) {
       .limit(1);
     if (!existing) return reply.code(404).send({ error: 'Category not found' });
 
+    // Strip locationIds — it's persisted into category_locations below.
+    const { locationIds: requestedLocs, ...catUpdate } = data;
+
     // If name changed but slug not provided, regenerate slug
-    const updateData: Record<string, unknown> = { ...data, updatedAt: new Date() };
-    if (data.name && !data.slug) {
-      updateData.slug = toSlug(data.name);
+    const updateData: Record<string, unknown> = { ...catUpdate, updatedAt: new Date() };
+    if (catUpdate.name && !catUpdate.slug) {
+      updateData.slug = toSlug(catUpdate.name);
     }
 
     const [category] = await db
@@ -210,6 +232,14 @@ export async function categoryRoutes(app: FastifyInstance) {
 
     if (!category) return reply.code(404).send({ error: 'Category not found' });
 
+    // Persist the new location set if the field was sent. Empty array
+    // resets to catalog-wide. `undefined` leaves the existing rows
+    // untouched (so admin can edit name/slug without disturbing the
+    // location set they configured separately).
+    if (requestedLocs !== undefined) {
+      await setCategoryLocations(id, requestedLocs);
+    }
+
     // Auto-shift sortOrder so values stay unique 1..N within the tenant.
     if (data.sortOrder !== undefined && data.sortOrder !== existing.sortOrder) {
       await placeCategoryAtPosition(id, data.sortOrder, tenantId);
@@ -218,10 +248,18 @@ export async function categoryRoutes(app: FastifyInstance) {
         .from(categories)
         .where(eq(categories.id, id))
         .limit(1);
-      return { category: refreshed ?? category };
+      const finalLocs = await db
+        .select({ locationId: categoryLocations.locationId })
+        .from(categoryLocations)
+        .where(eq(categoryLocations.categoryId, id));
+      return { category: refreshed ?? category, locationIds: finalLocs.map((r) => r.locationId) };
     }
 
-    return { category };
+    const finalLocs = await db
+      .select({ locationId: categoryLocations.locationId })
+      .from(categoryLocations)
+      .where(eq(categoryLocations.categoryId, id));
+    return { category, locationIds: finalLocs.map((r) => r.locationId) };
   });
 
   // Get product count for a category

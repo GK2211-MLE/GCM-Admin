@@ -77,6 +77,11 @@ export const createCategorySchema = z.object({
   imageUrl: z.string().default(''),
   active: z.boolean().default(true),
   sortOrder: z.number().int().default(0),
+  // Per-location availability. Empty array (or undefined) = catalog-wide
+  // — visible at every store. Non-empty = explicit allow-list of
+  // location UUIDs. Source of truth is the category_locations join
+  // table; this field just shapes the request.
+  locationIds: z.array(z.string().uuid()).optional(),
 });
 export type CreateCategoryInput = z.infer<typeof createCategorySchema>;
 

@@ -48,12 +48,16 @@ interface LocationOption {
   name: string;
 }
 
+type LocationMode = 'all' | 'specific';
+
 interface FormState {
   name: string;
   slug: string;
   imageUrl: string;
   sortOrder: string;
   active: boolean;
+  locationMode: LocationMode;
+  locationIds: string[];
 }
 
 const EMPTY_FORM: FormState = {
@@ -62,6 +66,8 @@ const EMPTY_FORM: FormState = {
   imageUrl: '',
   sortOrder: '0',
   active: true,
+  locationMode: 'all',
+  locationIds: [],
 };
 
 function toSlug(name: string): string {
@@ -202,12 +208,16 @@ export function CatalogPage() {
 
   const openEdit = useCallback((cat: Category) => {
     setEditTarget(cat);
+    const locIds = cat.locationIds ?? [];
     setForm({
       name: cat.name,
       slug: cat.slug,
       imageUrl: cat.imageUrl,
       sortOrder: String(cat.sortOrder),
       active: cat.active,
+      // Empty array = catalog-wide ('all'); non-empty = specific list.
+      locationMode: locIds.length === 0 ? 'all' : 'specific',
+      locationIds: locIds,
     });
     setAutoSlug(false);
     setShowDialog(true);
@@ -237,12 +247,16 @@ export function CatalogPage() {
   }, []);
 
   const onSave = useCallback(() => {
+    // Resolve location set: 'all' mode → empty array (catalog-wide);
+    // 'specific' mode → whatever the admin checked.
+    const locationIds = form.locationMode === 'all' ? [] : form.locationIds;
     const payload = {
       name: form.name.trim(),
       slug: form.slug.trim() || toSlug(form.name),
       imageUrl: form.imageUrl.trim(),
       sortOrder: parseInt(form.sortOrder, 10) || 0,
       active: form.active,
+      locationIds,
     };
     if (editTarget) {
       updateCategory.mutate({ id: editTarget.id, payload });
@@ -252,7 +266,9 @@ export function CatalogPage() {
   }, [form, editTarget, createCategory, updateCategory]);
 
   const isSaving = createCategory.isPending || updateCategory.isPending;
-  const isFormValid = form.name.trim().length > 0;
+  const isFormValid =
+    form.name.trim().length > 0 &&
+    !(form.locationMode === 'specific' && form.locationIds.length === 0);
 
   // ── Table columns ────────────────────────────────────────────────────────
 
@@ -528,6 +544,81 @@ export function CatalogPage() {
                 value={form.sortOrder}
                 onChange={(e) => updateField('sortOrder', e.target.value)}
               />
+            </div>
+
+            {/* Available at locations — same UX as the product detail
+                page. Empty list (= 'all locations' mode) means the
+                category is catalog-wide. Specific list lets admin
+                hide the category from chosen stores. */}
+            <div className="rounded-lg border border-[var(--border-default)] p-4">
+              <div className="mb-3">
+                <p className="text-sm font-medium text-[var(--text-primary)]">
+                  Available at locations
+                </p>
+                <p className="text-xs text-[var(--text-tertiary)]">
+                  Choose where this category should appear. "All locations" makes
+                  it visible at every store.
+                </p>
+              </div>
+              <div className="mb-4 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => updateField('locationMode', 'all')}
+                  className={`flex-1 rounded-md border px-3 py-2 text-sm transition-colors ${
+                    form.locationMode === 'all'
+                      ? 'border-primary-500 bg-primary-500/10 text-primary-500'
+                      : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--surface-tertiary)]'
+                  }`}
+                >
+                  All locations
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateField('locationMode', 'specific')}
+                  className={`flex-1 rounded-md border px-3 py-2 text-sm transition-colors ${
+                    form.locationMode === 'specific'
+                      ? 'border-primary-500 bg-primary-500/10 text-primary-500'
+                      : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--surface-tertiary)]'
+                  }`}
+                >
+                  Specific locations
+                </button>
+              </div>
+              {form.locationMode === 'specific' && (
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {(locationsData ?? []).map((loc) => {
+                    const checked = form.locationIds.includes(loc.id);
+                    return (
+                      <label
+                        key={loc.id}
+                        className={`flex cursor-pointer items-center gap-2 rounded-md border border-[var(--border-default)] px-3 py-2 text-sm transition-colors ${
+                          checked
+                            ? 'border-primary-500/50 bg-primary-500/5'
+                            : 'hover:bg-[var(--surface-tertiary)]/40'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                              ? [...form.locationIds, loc.id]
+                              : form.locationIds.filter((x) => x !== loc.id);
+                            updateField('locationIds', next);
+                          }}
+                          className="h-4 w-4 accent-primary-500"
+                        />
+                        <span className="truncate text-[var(--text-primary)]">{loc.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              {form.locationMode === 'specific' && form.locationIds.length === 0 && (
+                <p className="mt-2 text-xs text-danger">
+                  Pick at least one location, or switch back to "All locations".
+                </p>
+              )}
             </div>
 
             {/* Active toggle */}

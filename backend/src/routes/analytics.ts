@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { eq, and, sql, gte, lte, lt, desc, count } from 'drizzle-orm';
+import { eq, ne, and, sql, gte, lte, lt, desc, count } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { orders, orderItems, products, customers, appUsers, locations, storeInventory } from '../db/schema.js';
 import { authGuard, getLocationScope } from '../middleware/auth.js';
@@ -139,11 +139,15 @@ export async function analyticsRoutes(app: FastifyInstance) {
       ? Math.round(((thisWeek.orders - lastWeek.orders) / lastWeek.orders) * 100)
       : thisWeek.orders > 0 ? 100 : 0;
 
-    // Orders by status
+    // Orders by status. We exclude pending_payment from the breakdown:
+    // it's an abandoned-checkout state and the user explicitly asked
+    // for no pending_payment row in any admin surface (BUG-006). The
+    // dedicated abandonedCheckouts KPI below still tallies them so
+    // remarketing has the count it needs.
     const statusRows = await db.select({
       status: orders.status,
       count: sql<number>`count(*)::int`,
-    }).from(orders).where(conditions).groupBy(orders.status);
+    }).from(orders).where(and(conditions, ne(orders.status, 'pending_payment'))!).groupBy(orders.status);
 
     // Orders by delivery method — paid only (revenue chart drives this UI).
     const deliveryRows = await db.select({
@@ -197,7 +201,8 @@ export async function analyticsRoutes(app: FastifyInstance) {
       .orderBy(sql`sum(${orderItems.total}) desc`)
       .limit(15);
 
-    // Recent orders
+    // Recent orders — same rule as the orders list: pending_payment
+    // never appears (BUG-006).
     const recentOrders = await db.select({
       id: orders.id,
       orderCode: orders.orderCode,
@@ -206,7 +211,7 @@ export async function analyticsRoutes(app: FastifyInstance) {
       paymentMethod: orders.paymentMethod,
       deliveryMethod: orders.deliveryMethod,
       createdAt: orders.createdAt,
-    }).from(orders).where(conditions).orderBy(desc(orders.createdAt)).limit(10);
+    }).from(orders).where(and(conditions, ne(orders.status, 'pending_payment'))!).orderBy(desc(orders.createdAt)).limit(10);
 
     // Order source breakdown — paid only (this row drives revenue charts).
     const sourceRows = await db.select({

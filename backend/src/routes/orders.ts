@@ -30,21 +30,18 @@ export async function orderRoutes(app: FastifyInstance) {
 
     let conditions = [eq(orders.tenantId, tenantId)];
 
-    // Hide pending_payment rows from the admin orders list by default.
-    // These are abandoned-checkout records — created when the customer
-    // hit "Proceed to Checkout" but never completed the Stripe charge.
-    // Showing them mixed with real orders inflated the action-queue and
-    // made admins second-guess what was actually owed. Pass
-    // ?includePending=1 (or filter explicitly by status=pending_payment)
-    // to opt back in for debugging.
-    const rawQuery = request.query as { includePending?: string };
-    const includePending =
-      rawQuery.includePending === '1' || rawQuery.includePending === 'true' || filters.status === 'pending_payment';
-    if (!includePending) {
-      conditions.push(ne(orders.status, 'pending_payment'));
-    }
+    // Pending-payment rows are abandoned-checkout records (Stripe payment
+    // intent created, never charged). Per product decision they must never
+    // surface to admin — not in the default list, not via a filter tab.
+    // Admin should only ever see orders that have actually been paid (or
+    // are non-Stripe and therefore confirmed at create time).
+    conditions.push(ne(orders.status, 'pending_payment'));
 
-    if (filters.status) conditions.push(eq(orders.status, filters.status));
+    // status filter: silently drop a pending_payment selection so admin
+    // gets the (intentionally) empty list instead of bypassing the rule.
+    if (filters.status && filters.status !== 'pending_payment') {
+      conditions.push(eq(orders.status, filters.status));
+    }
     // Admin can filter to any location they like; non-admin is force-pinned to theirs.
     if (scope) {
       conditions.push(eq(orders.locationId, scope));
@@ -130,18 +127,20 @@ export async function orderRoutes(app: FastifyInstance) {
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
 
-    // Helper: build a tenant + (optional) location condition.
-    // `scoped` includes ALL orders regardless of payment status — used
-    // for the recent-orders feed and the status breakdown so the admin
-    // can still see pending_payment rows.
+    // Helper: build a tenant + (optional) location condition. We
+    // intentionally exclude pending_payment everywhere on the admin
+    // dashboard — abandoned checkouts must never appear in any admin
+    // surface. The status breakdown and recent-orders feed both use
+    // `scoped` and now reflect only paid/in-progress real orders.
+    const notPending = ne(orders.status, 'pending_payment');
     const scoped = (extra?: ReturnType<typeof and>) =>
       scope
         ? extra
-          ? and(eq(orders.tenantId, tenantId), eq(orders.locationId, scope), extra)!
-          : and(eq(orders.tenantId, tenantId), eq(orders.locationId, scope))!
+          ? and(eq(orders.tenantId, tenantId), eq(orders.locationId, scope), notPending, extra)!
+          : and(eq(orders.tenantId, tenantId), eq(orders.locationId, scope), notPending)!
         : extra
-          ? and(eq(orders.tenantId, tenantId), extra)!
-          : eq(orders.tenantId, tenantId);
+          ? and(eq(orders.tenantId, tenantId), notPending, extra)!
+          : and(eq(orders.tenantId, tenantId), notPending)!;
 
     // `paidScoped` is the same but adds paymentStatus='paid'. Every
     // revenue / order-count KPI on the dashboard goes through this so
@@ -352,6 +351,9 @@ export async function orderRoutes(app: FastifyInstance) {
     const orderConditions = [
       isUuid ? eq(orders.id, id) : eq(orders.orderCode, id),
       eq(orders.tenantId, tenantId),
+      // Same rule as the list: pending_payment rows must not be reachable
+      // by admin even by direct URL.
+      ne(orders.status, 'pending_payment'),
     ];
     if (scope) orderConditions.push(eq(orders.locationId, scope));
 
@@ -525,7 +527,7 @@ export async function orderRoutes(app: FastifyInstance) {
     const rows = await db
       .select()
       .from(orders)
-      .where(eq(orders.tenantId, tenantId))
+      .where(and(eq(orders.tenantId, tenantId), ne(orders.status, 'pending_payment'))!)
       .orderBy(desc(orders.createdAt));
 
     const header = 'Order Code,Status,Payment Method,Payment Status,Delivery Method,Subtotal,Tax,Total,Created At\n';

@@ -145,6 +145,15 @@ export const orders = pgTable(
     notes: text('notes'),
     source: varchar('source', { length: 20 }).notNull().default('app'),
     stripePaymentIntentId: varchar('stripe_payment_intent_id', { length: 255 }),
+    // Snapshot of the customer's contact info at order time. We used to
+    // read the linked customers row (or app_users row) on every order
+    // display, which meant when a guest with the same phone reused
+    // checkout the OLD order's name/email would silently change. These
+    // columns freeze the values at create time so order history stays
+    // honest.
+    customerNameSnapshot: varchar('customer_name_snapshot', { length: 255 }),
+    customerEmailSnapshot: varchar('customer_email_snapshot', { length: 255 }),
+    customerPhoneSnapshot: varchar('customer_phone_snapshot', { length: 32 }),
     rating: integer('rating'),
     ratingComment: text('rating_comment'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

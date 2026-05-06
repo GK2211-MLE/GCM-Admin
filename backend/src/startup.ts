@@ -498,6 +498,14 @@ DO $$ BEGIN ALTER TABLE notifications ADD COLUMN location_id UUID REFERENCES loc
 -- products. Stored in cents (matches products.price_per_unit).
 DO $$ BEGIN ALTER TABLE product_locations ADD COLUMN price_override_cents INTEGER; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 
+-- Customer-name snapshot on orders. Guests reusing the same phone number
+-- used to mutate the linked customers row's name/email, which retroactively
+-- changed every old order's displayed customer info. These columns freeze
+-- the values at order-create time so order history stays accurate.
+DO $$ BEGIN ALTER TABLE orders ADD COLUMN customer_name_snapshot VARCHAR(255); EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE orders ADD COLUMN customer_email_snapshot VARCHAR(255); EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE orders ADD COLUMN customer_phone_snapshot VARCHAR(32); EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+
 -- Per-location category availability. Same semantics as product_locations:
 -- zero rows = "available at all locations" (catalog-wide). One or more
 -- rows = explicit allow-list. Lets admin hide a whole category at one

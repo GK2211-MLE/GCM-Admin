@@ -30,6 +30,20 @@ export async function orderRoutes(app: FastifyInstance) {
 
     let conditions = [eq(orders.tenantId, tenantId)];
 
+    // Hide pending_payment rows from the admin orders list by default.
+    // These are abandoned-checkout records — created when the customer
+    // hit "Proceed to Checkout" but never completed the Stripe charge.
+    // Showing them mixed with real orders inflated the action-queue and
+    // made admins second-guess what was actually owed. Pass
+    // ?includePending=1 (or filter explicitly by status=pending_payment)
+    // to opt back in for debugging.
+    const rawQuery = request.query as { includePending?: string };
+    const includePending =
+      rawQuery.includePending === '1' || rawQuery.includePending === 'true' || filters.status === 'pending_payment';
+    if (!includePending) {
+      conditions.push(ne(orders.status, 'pending_payment'));
+    }
+
     if (filters.status) conditions.push(eq(orders.status, filters.status));
     // Admin can filter to any location they like; non-admin is force-pinned to theirs.
     if (scope) {
@@ -67,17 +81,26 @@ export async function orderRoutes(app: FastifyInstance) {
       db.select({ total: count() }).from(orders).where(where),
     ]);
 
-    // Fetch items and customer info for each order
+    // Fetch items and customer info for each order. Prefer the
+    // customer_*_snapshot columns frozen at order-create time over the
+    // current customers / app_users row, so a guest reusing the same
+    // phone for a later order doesn't retroactively rewrite this
+    // order's customer name.
     const enriched = await Promise.all(
       rows.map(async (order) => {
         const items = await db.select().from(orderItems).where(eq(orderItems.orderId, order.id));
-        let customer: { name: string | null; phone: string; email: string | null } | undefined;
+        let liveCustomer: { name: string | null; phone: string | null; email: string | null } | undefined;
         if (order.customerId) {
-          customer = (await db.select().from(customers).where(eq(customers.id, order.customerId)).limit(1))[0];
+          liveCustomer = (await db.select().from(customers).where(eq(customers.id, order.customerId)).limit(1))[0];
         } else if (order.appUserId) {
           const [appUser] = await db.select({ name: appUsers.name, phone: appUsers.phone, email: appUsers.email }).from(appUsers).where(eq(appUsers.id, order.appUserId)).limit(1);
-          if (appUser) customer = appUser;
+          if (appUser) liveCustomer = appUser;
         }
+        const customer = {
+          name: order.customerNameSnapshot ?? liveCustomer?.name ?? null,
+          phone: order.customerPhoneSnapshot ?? liveCustomer?.phone ?? '',
+          email: order.customerEmailSnapshot ?? liveCustomer?.email ?? null,
+        };
         const location = order.locationId
           ? (await db.select().from(locations).where(eq(locations.id, order.locationId)).limit(1))[0]
           : undefined;
@@ -237,7 +260,10 @@ export async function orderRoutes(app: FastifyInstance) {
       .orderBy(desc(count()))
       .limit(5);
 
-    // Recent orders (join both customers and app_users for name resolution)
+    // Recent orders. We pick from the snapshot fields first so the name
+    // shown on the dashboard matches what the customer typed at checkout
+    // for THIS order — the live customers row may have been mutated by a
+    // later guest reusing the same phone.
     const recentOrderRows = await db
       .select({
         id: orders.id,
@@ -246,6 +272,8 @@ export async function orderRoutes(app: FastifyInstance) {
         total: orders.total,
         createdAt: orders.createdAt,
         deliveryMethod: orders.deliveryMethod,
+        snapshotName: orders.customerNameSnapshot,
+        snapshotPhone: orders.customerPhoneSnapshot,
         customerName: customers.name,
         customerPhone: customers.phone,
         appUserName: appUsers.name,
@@ -265,8 +293,8 @@ export async function orderRoutes(app: FastifyInstance) {
       total: r.total,
       createdAt: r.createdAt,
       deliveryMethod: r.deliveryMethod,
-      customerName: r.customerName || r.appUserName,
-      customerPhone: r.customerPhone || r.appUserPhone,
+      customerName: r.snapshotName || r.customerName || r.appUserName,
+      customerPhone: r.snapshotPhone || r.customerPhone || r.appUserPhone,
     }));
 
     // Compute growth percentages
@@ -336,13 +364,21 @@ export async function orderRoutes(app: FastifyInstance) {
     if (!order) return reply.code(404).send({ error: 'Order not found' });
 
     const items = await db.select().from(orderItems).where(eq(orderItems.orderId, order.id));
-    let customer: { name: string | null; phone: string; email: string | null } | undefined;
+    // Prefer the snapshot frozen at order-create time. Fall back to the
+    // live customers / app_users row only when the snapshot is missing
+    // (older orders pre-migration).
+    let liveCustomer: { name: string | null; phone: string | null; email: string | null } | undefined;
     if (order.customerId) {
-      customer = (await db.select().from(customers).where(eq(customers.id, order.customerId)).limit(1))[0];
+      liveCustomer = (await db.select().from(customers).where(eq(customers.id, order.customerId)).limit(1))[0];
     } else if (order.appUserId) {
       const [appUser] = await db.select({ name: appUsers.name, phone: appUsers.phone, email: appUsers.email }).from(appUsers).where(eq(appUsers.id, order.appUserId)).limit(1);
-      if (appUser) customer = appUser;
+      if (appUser) liveCustomer = appUser;
     }
+    const customer = {
+      name: order.customerNameSnapshot ?? liveCustomer?.name ?? null,
+      phone: order.customerPhoneSnapshot ?? liveCustomer?.phone ?? '',
+      email: order.customerEmailSnapshot ?? liveCustomer?.email ?? null,
+    };
     const location = order.locationId
       ? (await db.select().from(locations).where(eq(locations.id, order.locationId)).limit(1))[0]
       : undefined;
@@ -371,23 +407,27 @@ export async function orderRoutes(app: FastifyInstance) {
 
     if (!existing) return reply.code(404).send({ error: 'Order not found' });
 
-    // Block confirming/fulfilling Stripe orders that haven't been paid yet,
-    // unless the admin explicitly forces it via { force: true }. The Stripe
-    // webhook is the only thing that should mark a Stripe order as paid.
+    // Block confirming/fulfilling Stripe orders that haven't been paid yet.
+    // The previous behaviour let `{ force: true }` flip a Stripe-pending
+    // order to paid without any actual transaction — security tester
+    // flagged this as a way to mark fake-paid orders. Now Stripe-pending
+    // orders cannot be force-paid; admin must first switch the
+    // paymentMethod to 'cod' or 'pay_at_store' (which itself requires
+    // admin role) and only then can the status move forward.
     const blockedStatuses = ['confirmed', 'preparing', 'ready_for_pickup', 'out_for_delivery', 'delivered'];
     const isStripeOrder = existing.paymentMethod === 'stripe';
     if (
       isStripeOrder &&
       existing.paymentStatus !== 'paid' &&
-      blockedStatuses.includes(status) &&
-      !force
+      blockedStatuses.includes(status)
     ) {
       return reply.code(409).send({
         error: 'Cannot fulfill an unpaid Stripe order',
         details: {
           paymentStatus: existing.paymentStatus,
           paymentMethod: existing.paymentMethod,
-          hint: 'Wait for the Stripe webhook to confirm payment, or pass {"force": true} to override.',
+          hint:
+            'Wait for the Stripe webhook to confirm payment. To bypass for an in-store cash transaction, change the order paymentMethod to cod or pay_at_store first.',
         },
       });
     }
@@ -400,15 +440,14 @@ export async function orderRoutes(app: FastifyInstance) {
 
     // For non-Stripe payment methods (cash, admin-created), auto-mark as paid
     // when the admin moves the order to a confirmed/fulfilled status. This
-    // preserves the existing COD/admin workflow.
+    // preserves the existing COD / pay-at-store workflow.
     if (status === 'confirmed' && !isStripeOrder) {
       updateData.paymentStatus = 'paid';
     }
-    // If admin explicitly forced past the unpaid check, also flip paymentStatus
-    // so the order doesn't show as "paid: pending" forever.
-    if (force && existing.paymentStatus !== 'paid' && blockedStatuses.includes(status)) {
-      updateData.paymentStatus = 'paid';
-    }
+    // The legacy force-flip-to-paid path is intentionally gone for
+    // Stripe orders. Non-Stripe forced fulfilment is already covered
+    // by the auto-paid block above.
+    void force;
 
     const [order] = await db
       .update(orders)

@@ -233,13 +233,22 @@ export async function customerOrderRoutes(app: FastifyInstance) {
       .from(orderItems)
       .where(eq(orderItems.orderId, order.id));
 
-    const [customer] = await db
+    const [liveCustomer] = await db
       .select({ name: appUsers.name, phone: appUsers.phone, email: appUsers.email })
       .from(appUsers)
       .where(eq(appUsers.id, customerId))
       .limit(1);
 
-    const html = generateInvoiceHtml(order, items, customer ?? { name: null, phone: null, email: null });
+    // Invoice carries the contact info snapshot frozen at order-create
+    // time — that's the legal record of who placed THIS order, even if
+    // the user later edited their profile.
+    const customer = {
+      name: order.customerNameSnapshot ?? liveCustomer?.name ?? null,
+      phone: order.customerPhoneSnapshot ?? liveCustomer?.phone ?? null,
+      email: order.customerEmailSnapshot ?? liveCustomer?.email ?? null,
+    };
+
+    const html = generateInvoiceHtml(order, items, customer);
     try {
       const pdf = await generateInvoicePdf(html);
       reply
@@ -291,13 +300,22 @@ export async function customerOrderRoutes(app: FastifyInstance) {
       .from(orderItems)
       .where(eq(orderItems.orderId, order.id));
 
-    const [customer] = await db
+    const [liveCustomer] = await db
       .select({ name: appUsers.name, phone: appUsers.phone, email: appUsers.email })
       .from(appUsers)
       .where(eq(appUsers.id, customerId))
       .limit(1);
 
-    const html = generateInvoiceHtml(order, items, customer ?? { name: null, phone: null, email: null });
+    // Invoice carries the contact info snapshot frozen at order-create
+    // time — that's the legal record of who placed THIS order, even if
+    // the user later edited their profile.
+    const customer = {
+      name: order.customerNameSnapshot ?? liveCustomer?.name ?? null,
+      phone: order.customerPhoneSnapshot ?? liveCustomer?.phone ?? null,
+      email: order.customerEmailSnapshot ?? liveCustomer?.email ?? null,
+    };
+
+    const html = generateInvoiceHtml(order, items, customer);
     reply.header('Content-Type', 'text/html; charset=utf-8').header('Cache-Control', 'no-store');
     return reply.send(html);
   });

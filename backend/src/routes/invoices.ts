@@ -30,6 +30,7 @@ export async function invoiceRoutes(app: FastifyInstance) {
         or(
           ilike(orders.orderCode, `%${filters.search}%`),
           ilike(customers.name, `%${filters.search}%`),
+          ilike(orders.customerNameSnapshot, `%${filters.search}%`),
         )!,
       );
     }
@@ -49,6 +50,9 @@ export async function invoiceRoutes(app: FastifyInstance) {
         total: orders.total,
         paymentMethod: orders.paymentMethod,
         createdAt: orders.createdAt,
+        snapshotName: orders.customerNameSnapshot,
+        snapshotPhone: orders.customerPhoneSnapshot,
+        snapshotEmail: orders.customerEmailSnapshot,
         customerName: customers.name,
         customerPhone: customers.phone,
         customerEmail: customers.email,
@@ -79,9 +83,9 @@ export async function invoiceRoutes(app: FastifyInstance) {
       invoiceNumber: `INV-${row.orderCode}`,
       orderId: row.id,
       orderCode: row.orderCode,
-      customerName: row.customerName || row.appUserName || 'Unknown',
-      customerPhone: row.customerPhone || row.appUserPhone || '',
-      customerEmail: row.customerEmail || row.appUserEmail || '',
+      customerName: row.snapshotName || row.customerName || row.appUserName || 'Unknown',
+      customerPhone: row.snapshotPhone || row.customerPhone || row.appUserPhone || '',
+      customerEmail: row.snapshotEmail || row.customerEmail || row.appUserEmail || '',
       subtotal: row.subtotal,
       tax: row.tax,
       deliveryFee: row.deliveryFee,
@@ -111,12 +115,12 @@ export async function invoiceRoutes(app: FastifyInstance) {
     if (!order) return reply.code(404).send({ error: 'Invoice not found' });
 
     const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
-    let customer: { name: string | null; phone: string; email: string | null } | undefined;
+    let liveCustomer: { name: string | null; phone: string | null; email: string | null } | undefined;
     if (order.customerId) {
-      customer = (await db.select().from(customers).where(eq(customers.id, order.customerId)).limit(1))[0];
+      liveCustomer = (await db.select().from(customers).where(eq(customers.id, order.customerId)).limit(1))[0];
     } else if (order.appUserId) {
       const [u] = await db.select({ name: appUsers.name, phone: appUsers.phone, email: appUsers.email }).from(appUsers).where(eq(appUsers.id, order.appUserId)).limit(1);
-      if (u) customer = u;
+      if (u) liveCustomer = u;
     }
 
     const taxRate = order.subtotal > 0 ? order.tax / order.subtotal : 0;
@@ -126,9 +130,9 @@ export async function invoiceRoutes(app: FastifyInstance) {
         invoiceNumber: `INV-${order.orderCode}`,
         orderId: order.id,
         orderCode: order.orderCode,
-        customerName: customer?.name || 'Unknown',
-        customerPhone: customer?.phone || '',
-        customerEmail: customer?.email || '',
+        customerName: order.customerNameSnapshot || liveCustomer?.name || 'Unknown',
+        customerPhone: order.customerPhoneSnapshot || liveCustomer?.phone || '',
+        customerEmail: order.customerEmailSnapshot || liveCustomer?.email || '',
         subtotal: order.subtotal,
         tax: order.tax,
         deliveryFee: order.deliveryFee,
@@ -164,14 +168,19 @@ export async function invoiceRoutes(app: FastifyInstance) {
     if (!order) return reply.code(404).send({ error: 'Invoice not found' });
 
     const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
-    let customer: { name: string | null; phone: string | null; email: string | null } = { name: null, phone: null, email: null };
+    let liveCustomer: { name: string | null; phone: string | null; email: string | null } = { name: null, phone: null, email: null };
     if (order.customerId) {
       const [c] = await db.select().from(customers).where(eq(customers.id, order.customerId)).limit(1);
-      if (c) customer = c;
+      if (c) liveCustomer = c;
     } else if (order.appUserId) {
       const [u] = await db.select({ name: appUsers.name, phone: appUsers.phone, email: appUsers.email }).from(appUsers).where(eq(appUsers.id, order.appUserId)).limit(1);
-      if (u) customer = u;
+      if (u) liveCustomer = u;
     }
+    const customer = {
+      name: order.customerNameSnapshot ?? liveCustomer.name,
+      phone: order.customerPhoneSnapshot ?? liveCustomer.phone,
+      email: order.customerEmailSnapshot ?? liveCustomer.email,
+    };
 
     const html = generateInvoiceHtml(order, items, customer);
     reply.header('Content-Type', 'text/html');
@@ -196,14 +205,19 @@ export async function invoiceRoutes(app: FastifyInstance) {
     if (!order) return reply.code(404).send({ error: 'Invoice not found' });
 
     const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
-    let customer: { name: string | null; phone: string | null; email: string | null } = { name: null, phone: null, email: null };
+    let liveCustomer: { name: string | null; phone: string | null; email: string | null } = { name: null, phone: null, email: null };
     if (order.customerId) {
       const [c] = await db.select().from(customers).where(eq(customers.id, order.customerId)).limit(1);
-      if (c) customer = c;
+      if (c) liveCustomer = c;
     } else if (order.appUserId) {
       const [u] = await db.select({ name: appUsers.name, phone: appUsers.phone, email: appUsers.email }).from(appUsers).where(eq(appUsers.id, order.appUserId)).limit(1);
-      if (u) customer = u;
+      if (u) liveCustomer = u;
     }
+    const customer = {
+      name: order.customerNameSnapshot ?? liveCustomer.name,
+      phone: order.customerPhoneSnapshot ?? liveCustomer.phone,
+      email: order.customerEmailSnapshot ?? liveCustomer.email,
+    };
 
     if (!customer.email) return reply.code(422).send({ error: 'Customer has no email address' });
 

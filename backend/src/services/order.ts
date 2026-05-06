@@ -61,7 +61,10 @@ export async function createOrder(input: CreateOrderInput) {
     ? 'pending'
     : 'pending';
 
-  // Create order
+  // Create order. We freeze the customer name + phone used for THIS
+  // order in the *_snapshot columns so a later reuse of the same phone
+  // (which mutates customers.name above) doesn't retroactively rewrite
+  // the displayed customer on this order — that was BUG-004.
   const [order] = await db
     .insert(orders)
     .values({
@@ -77,6 +80,9 @@ export async function createOrder(input: CreateOrderInput) {
       subtotal,
       tax,
       total,
+      customerNameSnapshot: customerName,
+      customerPhoneSnapshot: phone,
+      customerEmailSnapshot: customer.email ?? null,
     })
     .returning();
 

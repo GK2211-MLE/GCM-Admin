@@ -219,7 +219,20 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
       }
     }
 
-    // 6. Create order
+    // 6. Create order. Snapshot the customer's contact info on the
+    // row itself (customer_name_snapshot etc) so future updates to
+    // the customers / app_users record don't mutate this order's
+    // historical display.
+    const snapshotName = customer
+      ? body.contact?.name?.trim() || null
+      : guestName!;
+    const snapshotEmail = customer
+      ? customer.email
+      : guestEmail!;
+    const snapshotPhone = customer
+      ? body.contact?.phone?.trim() || null
+      : guestPhone!;
+
     const orderCode = generateOrderCode();
     const [order] = await db
       .insert(orders)
@@ -240,6 +253,9 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
         total,
         notes: body.notes ?? null,
         source: 'web',
+        customerNameSnapshot: snapshotName,
+        customerEmailSnapshot: snapshotEmail,
+        customerPhoneSnapshot: snapshotPhone,
       })
       .returning();
 

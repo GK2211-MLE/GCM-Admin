@@ -38,6 +38,23 @@ function tryGetForcedScope(request: FastifyRequest): string | null {
   }
 }
 
+/**
+ * Did the request come from the customer storefront (no auth, or a
+ * customer JWT without an admin/staff role)? If yes, we must hide
+ * inactive AND out-of-stock products from the response — those are
+ * back-office concerns. Admin and staff callers see the full catalog.
+ */
+function isStorefrontRequest(request: FastifyRequest): boolean {
+  const authHeader = request.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) return true;
+  try {
+    const raw = jwt.verify(authHeader.slice(7), config.JWT_SECRET) as { role?: string };
+    return !raw.role;
+  } catch {
+    return true;
+  }
+}
+
 /** Lookup the location IDs a product is currently tagged for. */
 async function getProductLocationIds(productId: string): Promise<string[]> {
   const rows = await db
@@ -275,7 +292,9 @@ export async function productRoutes(app: FastifyInstance) {
         .slice(0, limit);
 
       if (topProductIds.length >= 3) {
-        // Enough data — fetch full product rows in the ranked order
+        // Enough data — fetch full product rows in the ranked order. We
+        // require inStock=true here so the local-favourites strip on the
+        // homepage never shows a SKU the admin just pulled (BUG-007).
         const rows = await db
           .select()
           .from(products)
@@ -283,6 +302,7 @@ export async function productRoutes(app: FastifyInstance) {
             and(
               inArray(products.id, topProductIds),
               eq(products.active, true),
+              eq(products.inStock, true),
             ),
           );
         // Re-sort to match the ranked order from the aggregation
@@ -292,8 +312,12 @@ export async function productRoutes(app: FastifyInstance) {
       }
     }
 
-    // Phase 1: curated fallback — products NOT in the bestsellers
-    const conditions: ReturnType<typeof eq>[] = [eq(products.active, true)];
+    // Phase 1: curated fallback — products NOT in the bestsellers.
+    // active+inStock so we never recommend a SKU the admin pulled.
+    const conditions: ReturnType<typeof eq>[] = [
+      eq(products.active, true),
+      eq(products.inStock, true),
+    ];
     if (excludeIds.length > 0) {
       conditions.push(sql`${products.id} NOT IN (${sql.join(excludeIds.map((id) => sql`${id}`), sql`, `)})`);
     }
@@ -332,12 +356,21 @@ export async function productRoutes(app: FastifyInstance) {
 
     const forcedScope = tryGetForcedScope(request);
     const effectiveLocationId = forcedScope ?? query.locationId ?? null;
+    const storefront = isStorefrontRequest(request);
 
     let conditions = [];
     if (query.tenantId) conditions.push(eq(products.tenantId, query.tenantId));
     if (query.category) conditions.push(eq(products.category, query.category));
     if (query.active !== undefined) conditions.push(eq(products.active, query.active === 'true'));
     if (query.featured !== undefined) conditions.push(eq(products.featured, query.featured === 'true'));
+    // Storefront callers (anonymous + logged-in customers) only ever see
+    // live, in-stock items. Admin marking a SKU out of stock used to
+    // leave it purchaseable on the customer site (BUG-007); enforce the
+    // gate at the API layer so every storefront surface inherits it.
+    if (storefront) {
+      conditions.push(eq(products.active, true));
+      conditions.push(eq(products.inStock, true));
+    }
     if (query.search) {
       const term = `%${query.search}%`;
       conditions.push(
@@ -437,6 +470,14 @@ export async function productRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string };
     const [product] = await db.select().from(products).where(eq(products.id, id)).limit(1);
     if (!product) return reply.code(404).send({ error: 'Product not found' });
+
+    // Storefront callers cannot deep-link to inactive or out-of-stock
+    // SKUs — admin must see them via the back office. Otherwise a
+    // bookmarked /shop/<slug> would still load and add-to-cart, which
+    // is exactly the path BUG-007 reproduced on.
+    if (isStorefrontRequest(request) && (!product.active || !product.inStock)) {
+      return reply.code(404).send({ error: 'Product not found' });
+    }
 
     const locationIds = await getProductLocationIds(product.id);
     const locationPrices = await getProductLocationPrices(product.id);

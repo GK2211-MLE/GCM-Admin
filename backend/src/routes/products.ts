@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { eq, and, asc, desc, ilike, or, sql, inArray, isNull, notExists } from 'drizzle-orm';
+import { eq, ne, and, asc, desc, ilike, or, sql, inArray, isNull, notExists } from 'drizzle-orm';
 import jwt from 'jsonwebtoken';
 import { db } from '../db/client.js';
 import { products, categories, productLocations, locations, orders, orderItems, cartItems, storeInventory } from '../db/schema.js';
@@ -38,6 +38,23 @@ function tryGetForcedScope(request: FastifyRequest): string | null {
   }
 }
 
+/**
+ * Did the request come from the customer storefront (no auth, or a
+ * customer JWT without an admin/staff role)? If yes, we must hide
+ * inactive AND out-of-stock products from the response — those are
+ * back-office concerns. Admin and staff callers see the full catalog.
+ */
+function isStorefrontRequest(request: FastifyRequest): boolean {
+  const authHeader = request.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) return true;
+  try {
+    const raw = jwt.verify(authHeader.slice(7), config.JWT_SECRET) as { role?: string };
+    return !raw.role;
+  } catch {
+    return true;
+  }
+}
+
 /** Lookup the location IDs a product is currently tagged for. */
 async function getProductLocationIds(productId: string): Promise<string[]> {
   const rows = await db
@@ -47,12 +64,41 @@ async function getProductLocationIds(productId: string): Promise<string[]> {
   return rows.map((r) => r.locationId);
 }
 
-/** Replace the product_locations rows for a product. */
-async function setProductLocations(productId: string, locationIds: string[]): Promise<void> {
+/**
+ * Lookup per-location price overrides for a product. Returns a map keyed
+ * by locationId; missing keys (or null values) mean "inherit base price".
+ */
+async function getProductLocationPrices(productId: string): Promise<Record<string, number | null>> {
+  const rows = await db
+    .select({
+      locationId: productLocations.locationId,
+      priceOverrideCents: productLocations.priceOverrideCents,
+    })
+    .from(productLocations)
+    .where(eq(productLocations.productId, productId));
+  const out: Record<string, number | null> = {};
+  for (const r of rows) out[r.locationId] = r.priceOverrideCents;
+  return out;
+}
+
+/**
+ * Replace the product_locations rows for a product.
+ * `locationPrices` (optional) maps locationId → price in cents (or null
+ * for "inherit base"). Locations not in the map get null too.
+ */
+async function setProductLocations(
+  productId: string,
+  locationIds: string[],
+  locationPrices?: Record<string, number | null>,
+): Promise<void> {
   await db.delete(productLocations).where(eq(productLocations.productId, productId));
   if (locationIds.length === 0) return;
   await db.insert(productLocations).values(
-    locationIds.map((locationId) => ({ productId, locationId })),
+    locationIds.map((locationId) => ({
+      productId,
+      locationId,
+      priceOverrideCents: locationPrices?.[locationId] ?? null,
+    })),
   );
 }
 
@@ -116,6 +162,80 @@ async function syncStoreInventory(
   }
 }
 
+/**
+ * Renumber a single category's products to a tight 1..N sequence,
+ * placing `productId` at `position` (1-indexed). Other products keep
+ * their relative order. Used by POST and PUT to enforce the rule that
+ * sortOrder is unique inside a category and that bumping one entry
+ * cascades the rest.
+ *
+ * If `productId` isn't currently in the category, it's added at the
+ * desired position. If it IS in the category it's lifted out and
+ * re-inserted at `position`.
+ */
+async function placeProductAtPosition(
+  productId: string,
+  position: number,
+  category: string,
+  tenantId: string,
+): Promise<void> {
+  if (!category) return;
+  const others = await db
+    .select({ id: products.id })
+    .from(products)
+    .where(
+      and(
+        eq(products.tenantId, tenantId),
+        eq(products.category, category),
+        ne(products.id, productId),
+      ),
+    )
+    .orderBy(asc(products.sortOrder), desc(products.createdAt));
+
+  const totalAfter = others.length + 1;
+  const pos = Math.max(1, Math.min(position, totalAfter));
+  const ordered: { id: string }[] = [
+    ...others.slice(0, pos - 1),
+    { id: productId },
+    ...others.slice(pos - 1),
+  ];
+
+  await Promise.all(
+    ordered.map((p, i) =>
+      db
+        .update(products)
+        .set({ sortOrder: i + 1, updatedAt: new Date() })
+        .where(eq(products.id, p.id)),
+    ),
+  );
+}
+
+/**
+ * Tighten a category's product sortOrder to 1..N preserving current
+ * order. Used after a product moves OUT of a category, to close the
+ * gap left behind.
+ */
+async function renumberCategoryProducts(
+  category: string,
+  tenantId: string,
+): Promise<void> {
+  if (!category) return;
+  const all = await db
+    .select({ id: products.id })
+    .from(products)
+    .where(and(eq(products.tenantId, tenantId), eq(products.category, category)))
+    .orderBy(asc(products.sortOrder), desc(products.createdAt));
+
+  await Promise.all(
+    all.map((p, i) =>
+      db
+        .update(products)
+        .set({ sortOrder: i + 1, updatedAt: new Date() })
+        .where(eq(products.id, p.id)),
+    ),
+  );
+}
+
 export async function productRoutes(app: FastifyInstance) {
   // List distinct categories from all products
   app.get('/categories', async () => {
@@ -172,7 +292,9 @@ export async function productRoutes(app: FastifyInstance) {
         .slice(0, limit);
 
       if (topProductIds.length >= 3) {
-        // Enough data — fetch full product rows in the ranked order
+        // Enough data — fetch full product rows in the ranked order. We
+        // require inStock=true here so the local-favourites strip on the
+        // homepage never shows a SKU the admin just pulled (BUG-007).
         const rows = await db
           .select()
           .from(products)
@@ -180,6 +302,7 @@ export async function productRoutes(app: FastifyInstance) {
             and(
               inArray(products.id, topProductIds),
               eq(products.active, true),
+              eq(products.inStock, true),
             ),
           );
         // Re-sort to match the ranked order from the aggregation
@@ -189,8 +312,12 @@ export async function productRoutes(app: FastifyInstance) {
       }
     }
 
-    // Phase 1: curated fallback — products NOT in the bestsellers
-    const conditions: ReturnType<typeof eq>[] = [eq(products.active, true)];
+    // Phase 1: curated fallback — products NOT in the bestsellers.
+    // active+inStock so we never recommend a SKU the admin pulled.
+    const conditions: ReturnType<typeof eq>[] = [
+      eq(products.active, true),
+      eq(products.inStock, true),
+    ];
     if (excludeIds.length > 0) {
       conditions.push(sql`${products.id} NOT IN (${sql.join(excludeIds.map((id) => sql`${id}`), sql`, `)})`);
     }
@@ -229,12 +356,21 @@ export async function productRoutes(app: FastifyInstance) {
 
     const forcedScope = tryGetForcedScope(request);
     const effectiveLocationId = forcedScope ?? query.locationId ?? null;
+    const storefront = isStorefrontRequest(request);
 
     let conditions = [];
     if (query.tenantId) conditions.push(eq(products.tenantId, query.tenantId));
     if (query.category) conditions.push(eq(products.category, query.category));
     if (query.active !== undefined) conditions.push(eq(products.active, query.active === 'true'));
     if (query.featured !== undefined) conditions.push(eq(products.featured, query.featured === 'true'));
+    // Storefront callers (anonymous + logged-in customers) only ever see
+    // live, in-stock items. Admin marking a SKU out of stock used to
+    // leave it purchaseable on the customer site (BUG-007); enforce the
+    // gate at the API layer so every storefront surface inherits it.
+    if (storefront) {
+      conditions.push(eq(products.active, true));
+      conditions.push(eq(products.inStock, true));
+    }
     if (query.search) {
       const term = `%${query.search}%`;
       conditions.push(
@@ -259,16 +395,71 @@ export async function productRoutes(app: FastifyInstance) {
 
     const parsedLimit = query.limit ? Math.max(1, Math.min(200, parseInt(query.limit, 10))) : null;
 
+    // Two-level sort:
+    //   1. categories.sortOrder — the order admin set in the Catalog
+    //      page. Drives the "All" view: products of the first-listed
+    //      category come before products of the second, etc.
+    //   2. products.sortOrder — drives the order within each category
+    //      (and the order in a single-category page like /shop?category=Lamb).
+    //   3. products.createdAt DESC — tiebreaker so the newest SKU wins
+    //      when both sortOrders are equal.
+    // Joining via products.category (slug) = categories.slug. Products
+    // whose category slug doesn't match any categories row (orphaned)
+    // sort last because LEFT JOIN nulls become NULL which Postgres
+    // sorts last on ASC by default.
+    const orderCols = [
+      asc(categories.sortOrder),
+      asc(products.sortOrder),
+      desc(products.createdAt),
+    ];
     let qb = conditions.length > 0
-      ? db.select().from(products).where(and(...conditions)).orderBy(asc(products.sortOrder)).$dynamic()
-      : db.select().from(products).orderBy(asc(products.sortOrder)).$dynamic();
+      ? db.select({ p: products }).from(products)
+          .leftJoin(categories, eq(products.category, categories.slug))
+          .where(and(...conditions)).orderBy(...orderCols).$dynamic()
+      : db.select({ p: products }).from(products)
+          .leftJoin(categories, eq(products.category, categories.slug))
+          .orderBy(...orderCols).$dynamic();
 
     if (parsedLimit !== null && !Number.isNaN(parsedLimit)) {
       qb = qb.limit(parsedLimit);
     }
 
     const rows = await qb;
-    return { products: rows };
+    // Unwrap the joined { p } shape back to a flat product array.
+    const flatRows = rows.map((r) => r.p);
+
+    // Per-location pricing: when a locationId scope is active, swap the
+    // base pricePerUnit for any product that has an override at this
+    // store. One batched lookup keyed by productId so the per-product
+    // map can be applied in memory. NULL override = inherit base.
+    if (effectiveLocationId && flatRows.length > 0) {
+      const productIds = flatRows.map((p) => p.id);
+      const overrides = await db
+        .select({
+          productId: productLocations.productId,
+          priceOverrideCents: productLocations.priceOverrideCents,
+        })
+        .from(productLocations)
+        .where(and(
+          inArray(productLocations.productId, productIds),
+          eq(productLocations.locationId, effectiveLocationId),
+        ));
+      const overrideMap = new Map(
+        overrides
+          .filter((o) => o.priceOverrideCents != null)
+          .map((o) => [o.productId, o.priceOverrideCents as number]),
+      );
+      if (overrideMap.size > 0) {
+        return {
+          products: flatRows.map((p) => {
+            const ov = overrideMap.get(p.id);
+            return ov != null ? { ...p, pricePerUnit: ov } : p;
+          }),
+        };
+      }
+    }
+
+    return { products: flatRows };
   });
 
   // Get single product. Includes the locationIds the product is tagged for
@@ -280,7 +471,16 @@ export async function productRoutes(app: FastifyInstance) {
     const [product] = await db.select().from(products).where(eq(products.id, id)).limit(1);
     if (!product) return reply.code(404).send({ error: 'Product not found' });
 
+    // Storefront callers cannot deep-link to inactive or out-of-stock
+    // SKUs — admin must see them via the back office. Otherwise a
+    // bookmarked /shop/<slug> would still load and add-to-cart, which
+    // is exactly the path BUG-007 reproduced on.
+    if (isStorefrontRequest(request) && (!product.active || !product.inStock)) {
+      return reply.code(404).send({ error: 'Product not found' });
+    }
+
     const locationIds = await getProductLocationIds(product.id);
+    const locationPrices = await getProductLocationPrices(product.id);
 
     const forcedScope = tryGetForcedScope(request);
     if (forcedScope) {
@@ -288,7 +488,11 @@ export async function productRoutes(app: FastifyInstance) {
       if (!visible) return reply.code(404).send({ error: 'Product not found' });
     }
 
-    return { product: { ...product, locationIds } };
+    // Detail endpoint always returns the BASE price + the locationPrices
+    // map. Admin needs the base price for the edit form; customer-side
+    // price swapping happens in the list endpoint when ?locationId=X is
+    // passed (see flatRows handling above).
+    return { product: { ...product, locationIds, locationPrices } };
   });
 
   // Create product (admin or store_manager).
@@ -359,8 +563,10 @@ export async function productRoutes(app: FastifyInstance) {
         .replace(/^-|-$/g, '');
     }
 
-    // Strip locationIds from the insert payload — it's not a column on products.
-    const { locationIds: _ignoreLocationIds, ...productInsert } = data;
+    // Strip locationIds + locationPrices from the insert payload — they
+    // aren't columns on the products table; they get persisted into the
+    // product_locations join below.
+    const { locationIds: _ignoreLocationIds, locationPrices: _ignoreLocationPrices, ...productInsert } = data;
 
     const [product] = await db
       .insert(products)
@@ -373,7 +579,7 @@ export async function productRoutes(app: FastifyInstance) {
       })
       .returning();
 
-    await setProductLocations(product.id, locationIdsToWrite);
+    await setProductLocations(product.id, locationIdsToWrite, data.locationPrices);
 
     // Auto-create storeInventory rows so the product appears in per-store inventory
     await syncStoreInventory(product.id, locationIdsToWrite, tenantId, {
@@ -381,7 +587,23 @@ export async function productRoutes(app: FastifyInstance) {
       lowStockThreshold: product.lowStockThreshold,
     });
 
-    return { product: { ...product, locationIds: locationIdsToWrite } };
+    // Slot the new product into its category at the requested sortOrder,
+    // shifting the rest down by 1. The schema default (999) gets clamped
+    // to N+1 = "append at end", so unspecified sortOrder still lands new
+    // SKUs at the bottom of the category.
+    if (product.category) {
+      await placeProductAtPosition(product.id, data.sortOrder, product.category, tenantId);
+      const [refreshed] = await db
+        .select()
+        .from(products)
+        .where(eq(products.id, product.id))
+        .limit(1);
+      const locationPrices = await getProductLocationPrices(product.id);
+      return { product: { ...(refreshed ?? product), locationIds: locationIdsToWrite, locationPrices } };
+    }
+
+    const locationPrices = await getProductLocationPrices(product.id);
+    return { product: { ...product, locationIds: locationIdsToWrite, locationPrices } };
   });
 
   // Update product
@@ -458,7 +680,9 @@ export async function productRoutes(app: FastifyInstance) {
         .replace(/^-|-$/g, '');
     }
 
-    const { locationIds: _ignoreLocationIds, ...productUpdate } = data;
+    // Strip locationIds + locationPrices from the update payload — they
+    // are persisted into product_locations below, not on the products row.
+    const { locationIds: _ignoreLocationIds, locationPrices: _ignoreLocationPrices, ...productUpdate } = data;
 
     const [product] = await db
       .update(products)
@@ -475,17 +699,45 @@ export async function productRoutes(app: FastifyInstance) {
     if (!product) return reply.code(404).send({ error: 'Product not found' });
 
     if (newLocationIds !== null) {
-      await setProductLocations(id, newLocationIds);
+      await setProductLocations(id, newLocationIds, data.locationPrices);
 
       // Auto-create storeInventory rows for newly added locations
       await syncStoreInventory(id, newLocationIds, tenantId, {
         stockQuantity: product.stockQuantity,
         lowStockThreshold: product.lowStockThreshold,
       });
+    } else if (data.locationPrices !== undefined) {
+      // Admin only changed per-location prices, not the location set.
+      // Re-write the existing rows with the new override map.
+      const currentLocs = await getProductLocationIds(id);
+      if (currentLocs.length > 0) {
+        await setProductLocations(id, currentLocs, data.locationPrices);
+      }
     }
 
+    // Auto-shift sortOrder so values stay unique 1..N within each category.
+    //   - sortOrder change → re-place this product, others cascade.
+    //   - category change → close gap in old category, slot into new one.
+    const categoryChanged =
+      data.category !== undefined && data.category !== existing.category;
+    const sortOrderChanged =
+      data.sortOrder !== undefined && data.sortOrder !== existing.sortOrder;
+
+    if (categoryChanged || sortOrderChanged) {
+      const targetCategory = product.category;
+      const desiredPos = data.sortOrder ?? product.sortOrder ?? 999;
+      if (targetCategory) {
+        await placeProductAtPosition(id, desiredPos, targetCategory, tenantId);
+      }
+      if (categoryChanged && existing.category && existing.category !== targetCategory) {
+        await renumberCategoryProducts(existing.category, tenantId);
+      }
+    }
+
+    const [refreshed] = await db.select().from(products).where(eq(products.id, id)).limit(1);
     const finalLocationIds = await getProductLocationIds(id);
-    return { product: { ...product, locationIds: finalLocationIds } };
+    const finalLocationPrices = await getProductLocationPrices(id);
+    return { product: { ...(refreshed ?? product), locationIds: finalLocationIds, locationPrices: finalLocationPrices } };
   });
 
   // Delete product
@@ -619,5 +871,163 @@ export async function productRoutes(app: FastifyInstance) {
 
     if (!product) return reply.code(404).send({ error: 'Product not found' });
     return { product };
+  });
+
+  // ── Per-store availability toggle ────────────────────────────────────
+  // Flips a single product's availability at one specific location, used
+  // by the Inventory page row toggle. Handles all 4 transitions cleanly:
+  //
+  //   - Was catalog-wide (no rows), now turned OFF here:
+  //       fork into specific-locations covering ALL OTHER active stores.
+  //       Net effect: still available everywhere except this one.
+  //   - Was specific-locations including this store, turned OFF here:
+  //       just delete the (productId, locationId) row.
+  //   - Was specific-locations EXCLUDING this store, turned ON:
+  //       insert a (productId, locationId) row.
+  //   - Was catalog-wide, turned ON: no-op (already available everywhere).
+  app.post(
+    '/:id/availability/:locationId',
+    { preHandler: [authGuard] },
+    async (request, reply) => {
+      const tenantId = getTenantId(request);
+      const { id, locationId } = request.params as { id: string; locationId: string };
+      const { available } = request.body as { available: boolean };
+      const role = request.user!.role;
+
+      if (role === ROLES.STORE_STAFF) {
+        return reply.code(403).send({ error: 'Store staff cannot toggle product availability' });
+      }
+      if (role !== ROLES.ADMIN) {
+        // Non-admin: only allowed to toggle products at their own assigned location.
+        const myLoc = request.user!.assignedLocationId;
+        if (!myLoc || myLoc !== locationId) {
+          return reply.code(403).send({ error: 'Cannot toggle a different location' });
+        }
+      }
+
+      // Verify the product belongs to this tenant.
+      const [product] = await db
+        .select({ id: products.id })
+        .from(products)
+        .where(and(eq(products.id, id), eq(products.tenantId, tenantId)))
+        .limit(1);
+      if (!product) return reply.code(404).send({ error: 'Product not found' });
+
+      // Verify the location belongs to this tenant.
+      const [loc] = await db
+        .select({ id: locations.id })
+        .from(locations)
+        .where(and(eq(locations.id, locationId), eq(locations.tenantId, tenantId)))
+        .limit(1);
+      if (!loc) return reply.code(400).send({ error: 'Invalid location for this tenant' });
+
+      const currentLocs = await getProductLocationIds(id);
+      const wasCatalogWide = currentLocs.length === 0;
+      const wasIncludedHere = currentLocs.includes(locationId);
+
+      if (available) {
+        if (wasCatalogWide) {
+          // Already available everywhere — nothing to do.
+          return { product: { id, locationIds: [] }, changed: false };
+        }
+        if (wasIncludedHere) {
+          return { product: { id, locationIds: currentLocs }, changed: false };
+        }
+        // Add this location to the existing specific-locations set.
+        const next = [...currentLocs, locationId];
+        await setProductLocations(id, next);
+        // Make sure store_inventory rows reflect the new location set
+        // (defaults are 100 stock — same as initial product creation).
+        const [base] = await db.select().from(products).where(eq(products.id, id)).limit(1);
+        await syncStoreInventory(id, next, tenantId, {
+          stockQuantity: base?.stockQuantity ?? 100,
+          lowStockThreshold: base?.lowStockThreshold ?? 10,
+        });
+        return { product: { id, locationIds: next }, changed: true };
+      }
+
+      // available === false
+      if (wasCatalogWide) {
+        // Fork: list every active location in this tenant, exclude this one.
+        const allActive = await db
+          .select({ id: locations.id })
+          .from(locations)
+          .where(and(eq(locations.tenantId, tenantId), eq(locations.active, true)));
+        const next = allActive.map((l) => l.id).filter((lid) => lid !== locationId);
+        if (next.length === 0) {
+          // Edge case: only one active location and admin is turning the
+          // product off there. We deliberately don't end up with an
+          // empty product_locations row set (which would mean
+          // "available everywhere" — the opposite of intent). Instead
+          // we keep the catalog-wide state and surface a 409 so the
+          // admin sees what's happening.
+          return reply.code(409).send({
+            error: 'Cannot disable a catalog-wide product at the only active location.',
+          });
+        }
+        await setProductLocations(id, next);
+        const [base] = await db.select().from(products).where(eq(products.id, id)).limit(1);
+        await syncStoreInventory(id, next, tenantId, {
+          stockQuantity: base?.stockQuantity ?? 100,
+          lowStockThreshold: base?.lowStockThreshold ?? 10,
+        });
+        return { product: { id, locationIds: next }, changed: true };
+      }
+      if (!wasIncludedHere) {
+        // Already not available here — nothing to do.
+        return { product: { id, locationIds: currentLocs }, changed: false };
+      }
+      // Just drop this location from the existing set.
+      const next = currentLocs.filter((lid) => lid !== locationId);
+      await setProductLocations(id, next);
+      // Don't delete storeInventory row — keep the historical stock
+      // count so re-enabling later restores the same number.
+      return { product: { id, locationIds: next }, changed: true };
+    },
+  );
+
+  // ── Bulk-apply Halal certification to many products at once ────────
+  // Powers the new admin "Certifications" page. Admin enters cert
+  // details once, picks N products, hits Apply — every selected
+  // product gets isHalal=true + the same halalInfo blob written.
+  // Tenant-scoped so an admin can never write into a sibling tenant
+  // even if they fluke a foreign productId.
+  app.post('/halal-certify', { preHandler: [authGuard] }, async (request, reply) => {
+    const tenantId = getTenantId(request);
+    const role = request.user!.role;
+    if (role !== ROLES.ADMIN) {
+      return reply.code(403).send({ error: 'Only admin can bulk-certify products' });
+    }
+    const body = request.body as {
+      productIds?: string[];
+      halalInfo?: Record<string, unknown>;
+      isHalal?: boolean;
+    };
+    if (!Array.isArray(body.productIds) || body.productIds.length === 0) {
+      return reply.code(400).send({ error: 'productIds must be a non-empty array' });
+    }
+    const isHalal = body.isHalal !== false;
+    const halalInfo = body.halalInfo ?? {};
+
+    // Validate every productId belongs to this tenant.
+    const valid = await db
+      .select({ id: products.id })
+      .from(products)
+      .where(and(eq(products.tenantId, tenantId), inArray(products.id, body.productIds)));
+    const validIds = valid.map((r) => r.id);
+    if (validIds.length === 0) {
+      return reply.code(400).send({ error: 'None of the products belong to this tenant' });
+    }
+
+    await db
+      .update(products)
+      .set({ isHalal, halalInfo, updatedAt: new Date() })
+      .where(and(eq(products.tenantId, tenantId), inArray(products.id, validIds)));
+
+    return {
+      updatedCount: validIds.length,
+      requestedCount: body.productIds.length,
+      skipped: body.productIds.length - validIds.length,
+    };
   });
 }

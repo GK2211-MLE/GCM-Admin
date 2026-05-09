@@ -31,3 +31,23 @@ export async function customerAuthGuard(request: FastifyRequest, reply: FastifyR
     return reply.code(401).send({ error: 'Invalid or expired token' });
   }
 }
+
+/**
+ * Like customerAuthGuard but never rejects. If a valid customer token
+ * is present, request.customer is attached. If not, the request
+ * continues as anonymous and the route handler can branch on
+ * `request.customer` being undefined (e.g. guest checkout flow).
+ */
+export async function customerAuthOptional(request: FastifyRequest) {
+  const authHeader = request.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) return;
+  const token = authHeader.slice(7);
+  try {
+    const payload = jwt.verify(token, config.JWT_SECRET) as CustomerJwtPayload;
+    if (payload.role === 'customer') {
+      request.customer = payload;
+    }
+  } catch {
+    // Bad token is fine — fall through as anonymous.
+  }
+}

@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/dialog';
 import { LoadingSpinner } from '@/components/feedback/LoadingSpinner';
 import { EmptyState } from '@/components/feedback/EmptyState';
+import { Switch } from '@/components/ui/switch';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -74,11 +75,17 @@ function InlineEditCell({
   onSave,
   min = 0,
   step,
+  readOnly = false,
+  readOnlyHint,
 }: {
   value: number;
   onSave: (newValue: number) => void;
   min?: number;
   step?: number;
+  /** When true, render as plain text — clicking does not enter edit mode. */
+  readOnly?: boolean;
+  /** Tooltip shown when hovering a read-only cell. */
+  readOnlyHint?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(String(value));
@@ -103,6 +110,17 @@ function InlineEditCell({
     }
     setEditing(false);
   };
+
+  if (readOnly) {
+    return (
+      <span
+        className="px-2 py-1 text-sm font-medium text-[var(--text-secondary)] cursor-not-allowed"
+        title={readOnlyHint}
+      >
+        {value}
+      </span>
+    );
+  }
 
   if (editing) {
     return (
@@ -356,6 +374,41 @@ export function InventoryPage() {
     updatePrice.mutate({ productId, pricePerUnit: priceInCents });
   }, [updatePrice]);
 
+  // Per-store availability toggle. Only meaningful when a specific store
+  // is selected (storeFilter !== 'all'). Flipping OFF removes the SKU
+  // from this store's catalog — the backend handles the all-locations
+  // fork case so a previously catalog-wide product becomes "everywhere
+  // except this store" cleanly.
+  const toggleAvailability = useMutation({
+    mutationFn: async ({ productId, available }: { productId: string; available: boolean }) => {
+      if (storeFilter === 'all') throw new Error('Pick a specific store first');
+      const { data } = await apiClient.post(
+        `/products/${productId}/availability/${storeFilter}`,
+        { available },
+      );
+      return data;
+    },
+    onSuccess: (_d, vars) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all });
+      toast.success(
+        vars.available
+          ? 'Product enabled at this store'
+          : 'Product disabled at this store',
+      );
+    },
+    onError: (err: any) => {
+      const msg = err?.response?.data?.error || 'Could not update availability';
+      toast.error(msg);
+    },
+  });
+
+  const handleAvailabilityToggle = useCallback(
+    (productId: string, available: boolean) => {
+      toggleAvailability.mutate({ productId, available });
+    },
+    [toggleAvailability],
+  );
+
   // ── Table columns ─────────────────────────────────────────────────────────
   const columns: ColumnDef<InventoryItem, unknown>[] = useMemo(() => [
     {
@@ -405,6 +458,11 @@ export function InventoryPage() {
         <InlineEditCell
           value={row.original.stockQuantity}
           onSave={(newVal) => handleStockSave(row.original.id, newVal)}
+          // Stock is per-store. Editing in "all stores" mode used to
+          // broadcast the same number to every store_inventory row,
+          // which is almost never what admin meant. Lock it.
+          readOnly={storeFilter === 'all'}
+          readOnlyHint={storeFilter === 'all' ? 'Pick a store from the filter to edit stock' : undefined}
         />
       ),
     },
@@ -415,6 +473,8 @@ export function InventoryPage() {
         <InlineEditCell
           value={row.original.lowStockThreshold}
           onSave={(newVal) => handleThresholdSave(row.original.id, newVal)}
+          readOnly={storeFilter === 'all'}
+          readOnlyHint={storeFilter === 'all' ? 'Pick a store from the filter to edit thresholds' : undefined}
         />
       ),
     },
@@ -428,6 +488,31 @@ export function InventoryPage() {
         return <Badge variant={variant}>{label}</Badge>;
       },
     },
+    // Per-store availability toggle — only when a specific store is
+    // selected. When storeFilter === 'all' we hide the column entirely
+    // (no meaningful single-store action to take). Visible rows here
+    // are by definition currently available at the selected store, so
+    // the switch starts ON; toggling OFF removes the SKU from this
+    // store's catalog (the row will disappear on the next refetch).
+    ...(storeFilter !== 'all'
+      ? ([
+          {
+            id: 'availability',
+            header: 'Available here',
+            size: 130,
+            cell: ({ row }) => (
+              <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+                <Switch
+                  checked={true}
+                  onCheckedChange={(checked) => handleAvailabilityToggle(row.original.id, checked)}
+                  disabled={toggleAvailability.isPending}
+                  aria-label="Toggle availability at this store"
+                />
+              </div>
+            ),
+          },
+        ] as ColumnDef<InventoryItem, unknown>[])
+      : []),
     {
       id: 'actions',
       header: '',
@@ -438,8 +523,9 @@ export function InventoryPage() {
             type="button"
             variant="ghost"
             className="h-8 w-8 p-0"
+            disabled={storeFilter === 'all'}
             onClick={(e) => { e.stopPropagation(); handleStockSave(row.original.id, row.original.stockQuantity + 1); }}
-            title="Add 1"
+            title={storeFilter === 'all' ? 'Pick a store to edit stock' : 'Add 1'}
           >
             <Plus className="h-4 w-4" />
           </Button>
@@ -447,8 +533,9 @@ export function InventoryPage() {
             type="button"
             variant="ghost"
             className="h-8 w-8 p-0"
+            disabled={storeFilter === 'all'}
             onClick={(e) => { e.stopPropagation(); handleStockSave(row.original.id, Math.max(0, row.original.stockQuantity - 1)); }}
-            title="Remove 1"
+            title={storeFilter === 'all' ? 'Pick a store to edit stock' : 'Remove 1'}
           >
             <Minus className="h-4 w-4" />
           </Button>
@@ -456,8 +543,9 @@ export function InventoryPage() {
             type="button"
             variant="ghost"
             className="h-8 w-8 p-0"
+            disabled={storeFilter === 'all'}
             onClick={(e) => { e.stopPropagation(); setAdjustTarget(row.original); }}
-            title="Adjust stock"
+            title={storeFilter === 'all' ? 'Pick a store to adjust stock' : 'Adjust stock'}
           >
             <Package className="h-4 w-4" />
           </Button>
@@ -473,7 +561,7 @@ export function InventoryPage() {
         </div>
       ),
     },
-  ], [handleStockSave, handleThresholdSave, navigate]);
+  ], [handleStockSave, handleThresholdSave, navigate, storeFilter, handleAvailabilityToggle, toggleAvailability.isPending]);
 
   // ── Render ────────────────────────────────────────────────────────────────
   if (isLoading) return <LoadingSpinner className="h-64" />;
@@ -588,10 +676,20 @@ export function InventoryPage() {
         </div>
       </div>
 
-      {storeFilter !== 'all' && (
+      {storeFilter !== 'all' ? (
         <div className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
           <MapPin className="h-4 w-4" />
           <span>Showing inventory for: <strong>{(locationsData ?? []).find(l => l.id === storeFilter)?.name}</strong></span>
+        </div>
+      ) : (
+        // Stock + threshold edits are intentionally disabled in this view.
+        // The previous behaviour (broadcast the same number to every
+        // store_inventory row) was an accidental foot-gun.
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300/40 bg-amber-50/40 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/5 dark:text-amber-200">
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          <span>
+            Stock and thresholds are read-only in this view. Pick a specific store from the filter above to edit per-store inventory.
+          </span>
         </div>
       )}
 

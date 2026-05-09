@@ -77,6 +77,11 @@ export const createCategorySchema = z.object({
   imageUrl: z.string().default(''),
   active: z.boolean().default(true),
   sortOrder: z.number().int().default(0),
+  // Per-location availability. Empty array (or undefined) = catalog-wide
+  // — visible at every store. Non-empty = explicit allow-list of
+  // location UUIDs. Source of truth is the category_locations join
+  // table; this field just shapes the request.
+  locationIds: z.array(z.string().uuid()).optional(),
 });
 export type CreateCategoryInput = z.infer<typeof createCategorySchema>;
 
@@ -99,6 +104,10 @@ export const createProductSchema = z.object({
   // product is only available at the listed locations. Source of truth is
   // the product_locations join table — this field just shapes the request.
   locationIds: z.array(z.string().uuid()).optional(),
+  // Per-location price overrides in cents, keyed by location UUID. Any
+  // location not present in this map (or set to null) inherits the base
+  // pricePerUnit. Only meaningful when locationIds is non-empty.
+  locationPrices: z.record(z.number().int().min(0).nullable()).optional(),
   active: z.boolean().default(true),
   inStock: z.boolean().default(true),
   // New products get 100 units by default so they show up on the
@@ -108,9 +117,22 @@ export const createProductSchema = z.object({
   // remembered to visit the separate Inventory page.
   stockQuantity: z.number().int().min(0).default(100),
   lowStockThreshold: z.number().int().min(0).default(10),
-  sortOrder: z.number().int().default(0),
+  // 999 (not 0) so that any explicit display-order admin types — 1, 2,
+  // 4, etc — floats above the un-numbered ones with the customer
+  // /products endpoint sorting ASC. With a default of 0 every new SKU
+  // would jam at the top and crowd out the explicitly-ordered ones.
+  sortOrder: z.number().int().default(999),
   isHalal: z.boolean().default(false),
   halalInfo: z.record(z.unknown()).default({}),
+  // Trust badges shown on the customer product detail page. Default true
+  // because the customer site previously rendered them hardcoded on every
+  // SKU; flipping these to false hides the badge for that one product.
+  badgeNoAntibiotics: z.boolean().default(true),
+  badgeColdChain: z.boolean().default(true),
+  badgeFresh: z.boolean().default(true),
+  // Hand Slaughtered is independent from isHalal — admin manages the cert
+  // section separately. Default false: only halal SKUs should show it.
+  badgeHandSlaughtered: z.boolean().default(false),
 });
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 

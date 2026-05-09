@@ -55,12 +55,20 @@ interface Product {
   inStock: boolean;
   isHalal?: boolean;
   halalInfo?: Record<string, unknown>;
+  badgeNoAntibiotics?: boolean;
+  badgeColdChain?: boolean;
+  badgeFresh?: boolean;
+  badgeHandSlaughtered?: boolean;
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
   // Locations the product is tagged for. Empty array = "all locations"
   // (catalog-wide). Backend is the source of truth via product_locations.
   locationIds?: string[];
+  // Per-location price overrides keyed by locationId, in cents. Missing
+  // keys (or null values) inherit pricePerUnit. Only meaningful when the
+  // product has specific locations set.
+  locationPrices?: Record<string, number | null>;
 }
 
 interface LocationOption {
@@ -96,9 +104,17 @@ interface FormState {
   sortOrder: string;
   isHalal: boolean;
   halalInfo: HalalInfo;
+  badgeNoAntibiotics: boolean;
+  badgeColdChain: boolean;
+  badgeFresh: boolean;
+  badgeHandSlaughtered: boolean;
   // Per-location availability. 'all' = catalog-wide; 'specific' = list.
   locationMode: LocationMode;
   locationIds: string[];
+  // UI representation of per-location price overrides. Stored as a
+  // string per location (the dollar input the admin types). Empty
+  // string = inherit base price. Converted to cents (or null) on save.
+  locationPriceDollars: Record<string, string>;
 }
 
 const EMPTY_FORM: FormState = {
@@ -113,8 +129,13 @@ const EMPTY_FORM: FormState = {
   sortOrder: '0',
   isHalal: false,
   halalInfo: { ...EMPTY_HALAL_INFO },
+  badgeNoAntibiotics: true,
+  badgeColdChain: true,
+  badgeFresh: true,
+  badgeHandSlaughtered: false,
   locationMode: 'all',
   locationIds: [],
+  locationPriceDollars: {},
 };
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -156,7 +177,7 @@ export function ProductDetailPage() {
   const { data: dbCategories = [] } = useQuery({
     queryKey: queryKeys.catalog.categories(),
     queryFn: async () => {
-      const { data } = await apiClient.get<{ categories: { slug: string; name: string; active: boolean }[] }>('/categories');
+      const { data } = await apiClient.get<{ categories: { slug: string; name: string; active: boolean }[] }>('/categories?includeInactive=1');
       return data.categories;
     },
   });
@@ -186,8 +207,18 @@ export function ProductDetailPage() {
         inStock: product.inStock ?? true,
         sortOrder: String(product.sortOrder ?? 0),
         isHalal: product.isHalal ?? false,
+        badgeNoAntibiotics: product.badgeNoAntibiotics ?? true,
+        badgeColdChain: product.badgeColdChain ?? true,
+        badgeFresh: product.badgeFresh ?? true,
+        badgeHandSlaughtered: product.badgeHandSlaughtered ?? false,
         locationMode: productLocationIds.length === 0 ? 'all' : 'specific',
         locationIds: productLocationIds,
+        locationPriceDollars: Object.fromEntries(
+          Object.entries(product.locationPrices ?? {}).map(([locId, cents]) => [
+            locId,
+            cents == null ? '' : (cents / 100).toFixed(2),
+          ]),
+        ),
         halalInfo: {
           certifyingBody: (hi?.certifyingBody as string) ?? '',
           certificateNumber: (hi?.certificateNumber as string) ?? '',
@@ -293,7 +324,25 @@ export function ProductDetailPage() {
       ...(isNew ? { stockQuantity: 100 } : {}),
       sortOrder: parseInt(form.sortOrder, 10) || 0,
       isHalal: form.isHalal,
+      badgeNoAntibiotics: form.badgeNoAntibiotics,
+      badgeColdChain: form.badgeColdChain,
+      badgeFresh: form.badgeFresh,
+      badgeHandSlaughtered: form.badgeHandSlaughtered,
       locationIds,
+      // Per-location price overrides. Convert each dollar string to
+      // cents (or null for "inherit"). Only sent when the admin is in
+      // 'specific' mode — in 'all' mode there are no per-location rows,
+      // so per-location prices don't apply.
+      locationPrices: isAdmin && form.locationMode === 'specific'
+        ? Object.fromEntries(
+            locationIds.map((locId) => {
+              const raw = form.locationPriceDollars[locId];
+              if (!raw || raw.trim() === '') return [locId, null];
+              const dollars = parseFloat(raw);
+              return [locId, isNaN(dollars) ? null : Math.round(dollars * 100)];
+            }),
+          )
+        : {},
       halalInfo: form.isHalal
         ? {
             ...form.halalInfo,
@@ -574,6 +623,76 @@ export function ProductDetailPage() {
                   />
                 </div>
 
+                {/* Trust badges — shown on the customer product detail page.
+                    No Antibiotics / Cold Chain / Fresh default ON.
+                    Hand Slaughtered defaults OFF and is independent from
+                    the Halal Certification section below — admin can flip
+                    one without affecting the other. */}
+                <div className="rounded-lg border border-[var(--border-default)] p-4 md:col-span-2 space-y-3">
+                  <div>
+                    <p className="text-sm font-medium text-[var(--text-primary)]">Trust Badges</p>
+                    <p className="text-xs text-[var(--text-tertiary)]">
+                      Shown on the product detail page. Untoggle if this SKU doesn't qualify.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-md border border-[var(--border-default)]/60 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">&#128016;</span>
+                      <div>
+                        <p className="text-sm text-[var(--text-primary)]">Hand Slaughtered</p>
+                        <p className="text-xs text-[var(--text-tertiary)]">Halal-certified processing</p>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={form.badgeHandSlaughtered}
+                      onCheckedChange={(checked) => updateField('badgeHandSlaughtered', checked)}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-md border border-[var(--border-default)]/60 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">&#128138;</span>
+                      <div>
+                        <p className="text-sm text-[var(--text-primary)]">No Antibiotics</p>
+                        <p className="text-xs text-[var(--text-tertiary)]">Pasture-raised, antibiotic-free</p>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={form.badgeNoAntibiotics}
+                      onCheckedChange={(checked) => updateField('badgeNoAntibiotics', checked)}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-md border border-[var(--border-default)]/60 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">&#129482;</span>
+                      <div>
+                        <p className="text-sm text-[var(--text-primary)]">Cold Chain</p>
+                        <p className="text-xs text-[var(--text-tertiary)]">Temperature-controlled farm to door</p>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={form.badgeColdChain}
+                      onCheckedChange={(checked) => updateField('badgeColdChain', checked)}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-md border border-[var(--border-default)]/60 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">&#10003;</span>
+                      <div>
+                        <p className="text-sm text-[var(--text-primary)]">100% Fresh</p>
+                        <p className="text-xs text-[var(--text-tertiary)]">Never frozen</p>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={form.badgeFresh}
+                      onCheckedChange={(checked) => updateField('badgeFresh', checked)}
+                    />
+                  </div>
+                </div>
+
                 {/* ── Available at locations ──────────────────────────── */}
                 <div className="rounded-lg border border-[var(--border-default)] p-4 md:col-span-2">
                   <div className="mb-3 flex items-center justify-between">
@@ -630,40 +749,73 @@ export function ProductDetailPage() {
                     </button>
                   </div>
 
-                  {/* Location checkboxes — only when 'specific' */}
+                  {/* Location checkboxes + per-location price overrides.
+                      The price input next to a checked store lets admin
+                      charge a different amount at that location. Empty
+                      means "inherit the base price". Only visible when
+                      'specific' mode is active. */}
                   {form.locationMode === 'specific' && (
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      {allLocations.map((loc) => {
-                        const checked = form.locationIds.includes(loc.id);
-                        const lockedToOther =
-                          !isAdmin && myLocationId !== null && loc.id !== myLocationId;
-                        return (
-                          <label
-                            key={loc.id}
-                            className={`flex cursor-pointer items-center gap-2 rounded-md border border-[var(--border-default)] px-3 py-2 text-sm transition-colors ${
-                              checked
-                                ? 'border-primary-500/50 bg-primary-500/5'
-                                : 'hover:bg-[var(--surface-tertiary)]/40'
-                            } ${lockedToOther ? 'cursor-not-allowed opacity-40' : ''}`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              disabled={lockedToOther}
-                              onChange={(e) => {
-                                if (lockedToOther) return;
-                                const next = e.target.checked
-                                  ? [...form.locationIds, loc.id]
-                                  : form.locationIds.filter((x) => x !== loc.id);
-                                updateField('locationIds', next);
-                              }}
-                              className="h-4 w-4 accent-primary-500"
-                            />
-                            <span className="truncate text-[var(--text-primary)]">{loc.name}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
+                    <>
+                      <p className="mb-2 text-xs text-[var(--text-tertiary)]">
+                        Price column is optional. Leave blank to use the base price (${form.priceDollars || '0.00'}). Set a value to charge a different amount at that store.
+                      </p>
+                      <div className="grid grid-cols-1 gap-2">
+                        {allLocations.map((loc) => {
+                          const checked = form.locationIds.includes(loc.id);
+                          const lockedToOther =
+                            !isAdmin && myLocationId !== null && loc.id !== myLocationId;
+                          return (
+                            <div
+                              key={loc.id}
+                              className={`flex items-center gap-2 rounded-md border border-[var(--border-default)] px-3 py-2 text-sm transition-colors ${
+                                checked
+                                  ? 'border-primary-500/50 bg-primary-500/5'
+                                  : 'hover:bg-[var(--surface-tertiary)]/40'
+                              } ${lockedToOther ? 'opacity-40' : ''}`}
+                            >
+                              <label className={`flex flex-1 items-center gap-2 ${lockedToOther ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={lockedToOther}
+                                  onChange={(e) => {
+                                    if (lockedToOther) return;
+                                    const next = e.target.checked
+                                      ? [...form.locationIds, loc.id]
+                                      : form.locationIds.filter((x) => x !== loc.id);
+                                    updateField('locationIds', next);
+                                  }}
+                                  className="h-4 w-4 accent-primary-500"
+                                />
+                                <span className="truncate text-[var(--text-primary)]">{loc.name}</span>
+                              </label>
+                              <div className="relative w-28 shrink-0">
+                                <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-[var(--text-tertiary)]">$</span>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  placeholder="base"
+                                  disabled={!checked || lockedToOther}
+                                  value={form.locationPriceDollars[loc.id] ?? ''}
+                                  onChange={(e) => {
+                                    setForm((prev) => ({
+                                      ...prev,
+                                      locationPriceDollars: {
+                                        ...prev.locationPriceDollars,
+                                        [loc.id]: e.target.value,
+                                      },
+                                    }));
+                                    setIsDirty(true);
+                                  }}
+                                  className="w-full rounded-md border border-[var(--border-default)] bg-[var(--surface-tertiary)] py-1.5 pl-5 pr-2 text-xs text-[var(--text-primary)] focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
                   )}
 
                   {form.locationMode === 'specific' && form.locationIds.length === 0 && (

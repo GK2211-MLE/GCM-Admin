@@ -364,6 +364,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS recipes_tenant_slug_idx ON recipes(tenant_id, 
 DO $$ BEGIN ALTER TABLE products ADD COLUMN is_halal BOOLEAN NOT NULL DEFAULT false; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 DO $$ BEGIN ALTER TABLE products ADD COLUMN halal_info JSONB NOT NULL DEFAULT '{}'; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 
+-- Per-product trust badges. Default true so existing products carry the
+-- same promises that were previously hardcoded as static TRUST_BADGES on
+-- the customer detail page; admin can untoggle if a SKU doesn't qualify.
+DO $$ BEGIN ALTER TABLE products ADD COLUMN badge_no_antibiotics BOOLEAN NOT NULL DEFAULT true; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE products ADD COLUMN badge_cold_chain BOOLEAN NOT NULL DEFAULT true; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE products ADD COLUMN badge_fresh BOOLEAN NOT NULL DEFAULT true; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+-- Hand Slaughtered is a separate badge from is_halal: a product can be
+-- hand-slaughtered without the full halal-cert paperwork filled in, and
+-- vice versa. Default false because it only applies to halal SKUs.
+DO $$ BEGIN ALTER TABLE products ADD COLUMN badge_hand_slaughtered BOOLEAN NOT NULL DEFAULT false; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+
 -- ============================================================
 -- Customer-website tables (added by customer-backend/)
 -- All idempotent — safe to run on every startup.
@@ -480,6 +491,33 @@ WHERE p.location_id IS NOT NULL
   );
 
 DO $$ BEGIN ALTER TABLE notifications ADD COLUMN location_id UUID REFERENCES locations(id); EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+
+-- Per-location price override on the product_locations join. NULL means
+-- "use the product's base price_per_unit". Lets admin charge $13.99 for
+-- the same SKU in Texas and $14.99 in Illinois without duplicating
+-- products. Stored in cents (matches products.price_per_unit).
+DO $$ BEGIN ALTER TABLE product_locations ADD COLUMN price_override_cents INTEGER; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+
+-- Customer-name snapshot on orders. Guests reusing the same phone number
+-- used to mutate the linked customers row's name/email, which retroactively
+-- changed every old order's displayed customer info. These columns freeze
+-- the values at order-create time so order history stays accurate.
+DO $$ BEGIN ALTER TABLE orders ADD COLUMN customer_name_snapshot VARCHAR(255); EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE orders ADD COLUMN customer_email_snapshot VARCHAR(255); EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE orders ADD COLUMN customer_phone_snapshot VARCHAR(32); EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+
+-- Per-location category availability. Same semantics as product_locations:
+-- zero rows = "available at all locations" (catalog-wide). One or more
+-- rows = explicit allow-list. Lets admin hide a whole category at one
+-- store while keeping it elsewhere.
+CREATE TABLE IF NOT EXISTS category_locations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+  location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS category_locations_unique_idx ON category_locations(category_id, location_id);
+CREATE INDEX IF NOT EXISTS category_locations_location_idx ON category_locations(location_id);
 
 -- Backfill empty product slugs. Products inserted via early admin flows
 -- (or test scaffolding) sometimes ended up with an empty slug, which makes

@@ -43,12 +43,30 @@ export async function customerRoutes(app: FastifyInstance) {
       ? sql`AND EXISTS (SELECT 1 FROM orders o WHERE o.app_user_id = app_users.id AND o.location_id = ${scope})`
       : sql``;
 
+    // Per-location aggregates: when scope is set we recompute
+    // totalOrders / totalSpent / lastOrderAt from orders restricted to
+    // that location. Without this, a Plano store_manager would see a
+    // shared customer's all-store totals — which is exactly the cross-
+    // location data leakage BUG-005 calls out.
+    const botTotalsCol = scope
+      ? sql`COALESCE((SELECT count(*)::int FROM orders o WHERE o.customer_id = customers.id AND o.location_id = ${scope}), 0)`
+      : sql`total_orders`;
+    const botSpentCol = scope
+      ? sql`COALESCE((SELECT sum(total)::int FROM orders o WHERE o.customer_id = customers.id AND o.location_id = ${scope}), 0)`
+      : sql`total_spent`;
+    const botLastCol = scope
+      ? sql`(SELECT max(created_at) FROM orders o WHERE o.customer_id = customers.id AND o.location_id = ${scope})`
+      : sql`last_order_at`;
+    const appOrdersAggLocFilter = scope ? sql`AND location_id = ${scope}` : sql``;
+
     // Union both customer sources into a single list (camelCase aliases for frontend)
     const result = await db.execute(sql`
       SELECT * FROM (
         SELECT
           id, tenant_id as "tenantId", name, phone, email, 'bot' as source,
-          total_orders as "totalOrders", total_spent as "totalSpent", last_order_at as "lastOrderAt",
+          ${botTotalsCol} as "totalOrders",
+          ${botSpentCol} as "totalSpent",
+          ${botLastCol} as "lastOrderAt",
           created_at as "createdAt", updated_at as "updatedAt"
         FROM customers
         WHERE tenant_id = ${tenantId} ${scopeBotJoin}
@@ -62,7 +80,7 @@ export async function customerRoutes(app: FastifyInstance) {
         FROM app_users au
         LEFT JOIN (
           SELECT app_user_id, count(*)::int as cnt, sum(total)::int as spent, max(created_at) as last_at
-          FROM orders WHERE app_user_id IS NOT NULL GROUP BY app_user_id
+          FROM orders WHERE app_user_id IS NOT NULL ${appOrdersAggLocFilter} GROUP BY app_user_id
         ) os ON os.app_user_id = au.id
         WHERE au.tenant_id = ${tenantId} AND au.role = 'customer' ${scopeAppJoin}
       ) combined
@@ -115,7 +133,6 @@ export async function customerRoutes(app: FastifyInstance) {
           .limit(1);
         if (!hit) return reply.code(404).send({ error: 'Customer not found' });
       }
-      customer = botCustomer;
       const orderConds = scope
         ? and(eq(orders.customerId, id), eq(orders.locationId, scope))!
         : eq(orders.customerId, id);
@@ -125,6 +142,24 @@ export async function customerRoutes(app: FastifyInstance) {
         .where(orderConds)
         .orderBy(desc(orders.createdAt))
         .limit(50);
+      // For a non-admin (location-scoped) caller, override totalOrders /
+      // totalSpent / lastOrderAt with values computed from THIS location
+      // only. Without this we'd return tenant-wide aggregates from the
+      // customers row, which is exactly the BUG-005 leakage. Admin
+      // (scope=null) keeps the original tenant-wide totals.
+      if (scope) {
+        const localTotalOrders = customerOrders.length;
+        const localTotalSpent = customerOrders.reduce((sum, o) => sum + o.total, 0);
+        const localLastOrderAt = customerOrders[0]?.createdAt ?? null;
+        customer = {
+          ...botCustomer,
+          totalOrders: localTotalOrders,
+          totalSpent: localTotalSpent,
+          lastOrderAt: localLastOrderAt,
+        };
+      } else {
+        customer = botCustomer;
+      }
     } else {
       const [appUser] = await db
         .select()

@@ -2,9 +2,9 @@ import type { FastifyInstance } from 'fastify';
 import { eq, and } from 'drizzle-orm';
 import Stripe from 'stripe';
 import { db } from '../../db/client.js';
-import { orders, orderItems, products, productLocations, promotions, tenants, appUsers } from '../../db/schema.js';
+import { orders, orderItems, products, productLocations, promotions, tenants, appUsers, customers } from '../../db/schema.js';
 import { config } from '../../config.js';
-import { customerAuthGuard } from '../middleware/auth.js';
+import { customerAuthOptional } from '../middleware/auth.js';
 import { checkoutSchema, confirmPaymentSchema } from '../validation/schemas.js';
 import { sendOrderConfirmationFor } from '../../services/order-email.js';
 
@@ -24,9 +24,30 @@ function getStripe(): Stripe | null {
 
 export async function customerCheckoutRoutes(app: FastifyInstance) {
   // ── Create order + Stripe checkout session ──────────────────
-  app.post('/', { preHandler: [customerAuthGuard] }, async (request, reply) => {
-    const customer = request.customer!;
+  // Auth is OPTIONAL. Two paths:
+  //   - Logged-in customer: order is linked via orders.appUserId.
+  //   - Guest: contact.{name,email,phone} all required; we find-or-
+  //     create a row in the `customers` table and link via orders.customerId.
+  app.post('/', { preHandler: [customerAuthOptional] }, async (request, reply) => {
+    const customer = request.customer; // may be undefined for guests
     const body = checkoutSchema.parse(request.body);
+
+    const guestName = body.contact?.name?.trim();
+    const guestEmail = body.contact?.email?.trim().toLowerCase();
+    const guestPhone = body.contact?.phone?.trim();
+
+    if (!customer) {
+      const missing: string[] = [];
+      if (!guestName) missing.push('contact.name');
+      if (!guestEmail) missing.push('contact.email');
+      if (!guestPhone) missing.push('contact.phone');
+      if (missing.length > 0) {
+        return reply.code(400).send({
+          error: 'Guest checkout requires name, email, and phone',
+          missing,
+        });
+      }
+    }
 
     // 1. Look up server-side prices (NEVER trust client prices) AND verify
     //    that every product the customer is trying to buy is actually
@@ -153,19 +174,73 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
       .split(',')
       .map((e) => e.trim().toLowerCase())
       .filter(Boolean);
-    const customerEmailLower = (customer.email || '').toLowerCase();
-    const customerIsWhitelisted = bypassWhitelist.includes(customerEmailLower);
+    const checkoutEmail = (customer?.email || guestEmail || '').toLowerCase();
+    const customerIsWhitelisted = bypassWhitelist.includes(checkoutEmail);
     const skipPayment = customerIsWhitelisted && (body.skip_payment !== false);
     // ─────────────────────────────────────────────────────────────
 
-    // 6. Create order
+    // 5b. Resolve the row that the order will reference. Logged-in
+    // customers attach via app_user_id; guests attach via the
+    // legacy `customers` table (find-or-create on phone+email).
+    let appUserId: string | null = null;
+    let customerId: string | null = null;
+    if (customer) {
+      appUserId = customer.id;
+    } else {
+      // Find existing legacy customer by phone (within this tenant).
+      // If a row with this phone exists we reuse it — phone is the
+      // cheapest stable identifier for a guest who comes back.
+      const existing = await db
+        .select({ id: customers.id })
+        .from(customers)
+        .where(and(
+          eq(customers.tenantId, tenant.id),
+          eq(customers.phone, guestPhone!),
+        ))
+        .limit(1);
+      if (existing.length > 0) {
+        customerId = existing[0].id;
+        // Refresh name/email so the latest checkout values stick.
+        await db
+          .update(customers)
+          .set({ name: guestName!, email: guestEmail!, updatedAt: new Date() })
+          .where(eq(customers.id, customerId));
+      } else {
+        const [newCust] = await db
+          .insert(customers)
+          .values({
+            tenantId: tenant.id,
+            phone: guestPhone!,
+            name: guestName!,
+            email: guestEmail!,
+          })
+          .returning({ id: customers.id });
+        customerId = newCust.id;
+      }
+    }
+
+    // 6. Create order. Snapshot the customer's contact info on the
+    // row itself (customer_name_snapshot etc) so future updates to
+    // the customers / app_users record don't mutate this order's
+    // historical display.
+    const snapshotName = customer
+      ? body.contact?.name?.trim() || null
+      : guestName!;
+    const snapshotEmail = customer
+      ? customer.email
+      : guestEmail!;
+    const snapshotPhone = customer
+      ? body.contact?.phone?.trim() || null
+      : guestPhone!;
+
     const orderCode = generateOrderCode();
     const [order] = await db
       .insert(orders)
       .values({
         tenantId: tenant.id,
         locationId: body.location_id ?? null,
-        appUserId: customer.id,
+        appUserId,
+        customerId,
         orderCode,
         status: skipPayment ? 'confirmed' : 'pending_payment',
         paymentMethod: skipPayment ? 'test_bypass' : 'stripe',
@@ -178,6 +253,9 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
         total,
         notes: body.notes ?? null,
         source: 'web',
+        customerNameSnapshot: snapshotName,
+        customerEmailSnapshot: snapshotEmail,
+        customerPhoneSnapshot: snapshotPhone,
       })
       .returning();
 
@@ -195,29 +273,30 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
       );
     }
 
-    // Resolve customer name for the email. If the customer typed a name
-    // on the checkout form that differs from the one on their profile,
-    // trust the checkout form and update the profile — otherwise the
-    // original signup name is baked in forever and every order email
-    // still greets them by the name they used months ago.
-    const typedName = body.contact?.name?.trim();
-    const typedPhone = body.contact?.phone?.trim();
-    const [customerRow] = await db
-      .select({ name: appUsers.name, phone: appUsers.phone })
-      .from(appUsers)
-      .where(eq(appUsers.id, customer.id))
-      .limit(1);
+    // Resolve customer name for the email. For logged-in users we also
+    // sync any name/phone the customer typed on the checkout form back
+    // onto their profile so future orders use the latest values.
+    let customerName: string;
+    if (customer) {
+      const typedName = body.contact?.name?.trim();
+      const typedPhone = body.contact?.phone?.trim();
+      const [customerRow] = await db
+        .select({ name: appUsers.name, phone: appUsers.phone })
+        .from(appUsers)
+        .where(eq(appUsers.id, customer.id))
+        .limit(1);
 
-    const profileUpdates: Record<string, unknown> = {};
-    if (typedName && typedName !== customerRow?.name) profileUpdates.name = typedName;
-    if (typedPhone && typedPhone !== customerRow?.phone) profileUpdates.phone = typedPhone;
-    if (Object.keys(profileUpdates).length > 0) {
-      profileUpdates.updatedAt = new Date();
-      await db.update(appUsers).set(profileUpdates).where(eq(appUsers.id, customer.id));
+      const profileUpdates: Record<string, unknown> = {};
+      if (typedName && typedName !== customerRow?.name) profileUpdates.name = typedName;
+      if (typedPhone && typedPhone !== customerRow?.phone) profileUpdates.phone = typedPhone;
+      if (Object.keys(profileUpdates).length > 0) {
+        profileUpdates.updatedAt = new Date();
+        await db.update(appUsers).set(profileUpdates).where(eq(appUsers.id, customer.id));
+      }
+      customerName = typedName || customerRow?.name || customer.email.split('@')[0];
+    } else {
+      customerName = guestName!;
     }
-
-    const customerName =
-      typedName || customerRow?.name || customer.email.split('@')[0];
 
     // 8. Bypass path — return the order without a clientSecret. The
     // customer site sees no clientSecret and no checkout_url, so it
@@ -269,10 +348,12 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
       automatic_payment_methods: { enabled: true }, // card + Apple Pay + Google Pay + Link
       description: `Farm2Cook order ${order.orderCode}`,
       statement_descriptor_suffix: 'FARM2COOK',
+      receipt_email: checkoutEmail || undefined,
       metadata: {
         orderId: order.id,
         orderCode: order.orderCode,
-        customerId: customer.id,
+        appUserId: appUserId ?? '',
+        guestCustomerId: customerId ?? '',
         itemDescription,
       },
     });
@@ -299,17 +380,19 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
   });
 
   // ── Confirm payment after Stripe redirect ───────────────────
-  app.post('/confirm', { preHandler: [customerAuthGuard] }, async (request, reply) => {
+  // Auth-optional: guests don't have a JWT but do know their order
+  // code (it was returned in the create-order response). Looking up
+  // by orderCode is safe — it's a 6-char random code that's only
+  // useful to flip an already-pending row to paid.
+  app.post('/confirm', { preHandler: [customerAuthOptional] }, async (request, reply) => {
     const { orderNumber } = confirmPaymentSchema.parse(request.body);
 
-    const [order] = await db
-      .select()
-      .from(orders)
-      .where(and(
-        eq(orders.orderCode, orderNumber),
-        eq(orders.appUserId, request.customer!.id),
-      ))
-      .limit(1);
+    // Logged-in: scope to their appUserId. Guest: look up by code only.
+    const where = request.customer
+      ? and(eq(orders.orderCode, orderNumber), eq(orders.appUserId, request.customer.id))
+      : eq(orders.orderCode, orderNumber);
+
+    const [order] = await db.select().from(orders).where(where).limit(1);
 
     if (!order) return reply.code(404).send({ error: 'Order not found' });
 

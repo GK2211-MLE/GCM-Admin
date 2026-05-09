@@ -35,6 +35,7 @@ const navItems = [
   { label: 'Invoices', icon: FileText, path: '/invoices' },
   { label: 'Inventory', icon: Warehouse, path: '/inventory' },
   { label: 'Catalog', icon: BookOpen, path: '/catalog' },
+  { label: 'Certifications', icon: ShieldCheck, path: '/certifications' },
   { label: 'Promotions', icon: Tag, path: '/promotions' },
   { label: 'Analytics', icon: BarChart3, path: '/analytics' },
   { label: 'CMS', icon: FileEdit, path: '/cms' },

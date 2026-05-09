@@ -3,8 +3,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { type ColumnDef } from '@tanstack/react-table';
 import { toast } from 'sonner';
 import {
-  Plus, Pencil, Trash2, ImageIcon, Grid3X3, List, GripVertical,
+  Plus, Pencil, Trash2, ImageIcon, Grid3X3, List, GripVertical, MapPin,
 } from 'lucide-react';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 
 import { apiClient } from '@/lib/api-client';
 import { queryKeys } from '@/lib/query-keys';
@@ -35,7 +38,17 @@ interface Category {
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
+  // Per-location availability. [] = available everywhere (catalog-wide);
+  // non-empty = explicit allow-list of location UUIDs.
+  locationIds?: string[];
 }
+
+interface LocationOption {
+  id: string;
+  name: string;
+}
+
+type LocationMode = 'all' | 'specific';
 
 interface FormState {
   name: string;
@@ -43,6 +56,8 @@ interface FormState {
   imageUrl: string;
   sortOrder: string;
   active: boolean;
+  locationMode: LocationMode;
+  locationIds: string[];
 }
 
 const EMPTY_FORM: FormState = {
@@ -51,6 +66,8 @@ const EMPTY_FORM: FormState = {
   imageUrl: '',
   sortOrder: '0',
   active: true,
+  locationMode: 'all',
+  locationIds: [],
 };
 
 function toSlug(name: string): string {
@@ -62,6 +79,9 @@ function toSlug(name: string): string {
 export function CatalogPage() {
   const queryClient = useQueryClient();
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
+  // Store filter — when set to a specific store id, the table shows an
+  // "Available here" toggle column for per-location category visibility.
+  const [storeFilter, setStoreFilter] = useState<string>('all');
 
   // Dialog state
   const [showDialog, setShowDialog] = useState(false);
@@ -72,12 +92,25 @@ export function CatalogPage() {
   // Delete dialog
   const [deleteTarget, setDeleteTarget] = useState<Category | null>(null);
 
+  // Locations list for the filter dropdown
+  const { data: locationsData } = useQuery({
+    queryKey: queryKeys.settings.locations(),
+    queryFn: async () => {
+      const { data } = await apiClient.get<{ locations: LocationOption[] }>('/locations/all');
+      return data.locations;
+    },
+  });
+
   // ── Queries ──────────────────────────────────────────────────────────────
 
   const { data: categories = [], isLoading } = useQuery({
     queryKey: queryKeys.catalog.categories(),
     queryFn: async () => {
-      const { data } = await apiClient.get<{ categories: Category[] }>('/categories');
+      // Admin needs every category (active + inactive) so the toggle /
+      // edit / delete actions still appear for archived rows. The
+      // customer site hits /categories without this flag and only gets
+      // active categories.
+      const { data } = await apiClient.get<{ categories: Category[] }>('/categories?includeInactive=1');
       return data.categories;
     },
   });
@@ -131,6 +164,39 @@ export function CatalogPage() {
     },
   });
 
+  // Per-store category availability. Mirrors the products one — admin
+  // toggles whether a category is visible at the currently-selected
+  // store. Empty locationIds = catalog-wide.
+  const toggleCategoryAvailability = useMutation({
+    mutationFn: async ({ categoryId, available }: { categoryId: string; available: boolean }) => {
+      if (storeFilter === 'all') throw new Error('Pick a specific store first');
+      const { data } = await apiClient.post(
+        `/categories/${categoryId}/availability/${storeFilter}`,
+        { available },
+      );
+      return data;
+    },
+    onSuccess: (_d, vars) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.catalog.all });
+      toast.success(
+        vars.available
+          ? 'Category enabled at this store'
+          : 'Category disabled at this store',
+      );
+    },
+    onError: (err: any) => {
+      const msg = err?.response?.data?.error || 'Could not update availability';
+      toast.error(msg);
+    },
+  });
+
+  const handleAvailabilityToggle = useCallback(
+    (categoryId: string, available: boolean) => {
+      toggleCategoryAvailability.mutate({ categoryId, available });
+    },
+    [toggleCategoryAvailability],
+  );
+
   // ── Helpers ──────────────────────────────────────────────────────────────
 
   const openAdd = useCallback(() => {
@@ -142,12 +208,16 @@ export function CatalogPage() {
 
   const openEdit = useCallback((cat: Category) => {
     setEditTarget(cat);
+    const locIds = cat.locationIds ?? [];
     setForm({
       name: cat.name,
       slug: cat.slug,
       imageUrl: cat.imageUrl,
       sortOrder: String(cat.sortOrder),
       active: cat.active,
+      // Empty array = catalog-wide ('all'); non-empty = specific list.
+      locationMode: locIds.length === 0 ? 'all' : 'specific',
+      locationIds: locIds,
     });
     setAutoSlug(false);
     setShowDialog(true);
@@ -177,12 +247,16 @@ export function CatalogPage() {
   }, []);
 
   const onSave = useCallback(() => {
+    // Resolve location set: 'all' mode → empty array (catalog-wide);
+    // 'specific' mode → whatever the admin checked.
+    const locationIds = form.locationMode === 'all' ? [] : form.locationIds;
     const payload = {
       name: form.name.trim(),
       slug: form.slug.trim() || toSlug(form.name),
       imageUrl: form.imageUrl.trim(),
       sortOrder: parseInt(form.sortOrder, 10) || 0,
       active: form.active,
+      locationIds,
     };
     if (editTarget) {
       updateCategory.mutate({ id: editTarget.id, payload });
@@ -192,7 +266,9 @@ export function CatalogPage() {
   }, [form, editTarget, createCategory, updateCategory]);
 
   const isSaving = createCategory.isPending || updateCategory.isPending;
-  const isFormValid = form.name.trim().length > 0;
+  const isFormValid =
+    form.name.trim().length > 0 &&
+    !(form.locationMode === 'specific' && form.locationIds.length === 0);
 
   // ── Table columns ────────────────────────────────────────────────────────
 
@@ -241,6 +317,33 @@ export function CatalogPage() {
         </Badge>
       ),
     },
+    // Per-store availability toggle. Visible only when a specific store
+    // is selected. Toggle reflects whether THIS category is visible at
+    // THAT store: catalog-wide ([] locationIds) shows ON; explicit
+    // list shows ON if locationIds includes the store, OFF otherwise.
+    ...(storeFilter !== 'all'
+      ? ([
+          {
+            id: 'availability',
+            header: 'Available here',
+            size: 130,
+            cell: ({ row }) => {
+              const ids = row.original.locationIds ?? [];
+              const checked = ids.length === 0 || ids.includes(storeFilter);
+              return (
+                <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+                  <Switch
+                    checked={checked}
+                    onCheckedChange={(c) => handleAvailabilityToggle(row.original.id, c)}
+                    disabled={toggleCategoryAvailability.isPending}
+                    aria-label="Toggle category availability at this store"
+                  />
+                </div>
+              );
+            },
+          },
+        ] as ColumnDef<Category, unknown>[])
+      : []),
     {
       id: 'actions',
       header: '',
@@ -265,7 +368,7 @@ export function CatalogPage() {
         </div>
       ),
     },
-  ], [openEdit]);
+  ], [openEdit, storeFilter, handleAvailabilityToggle, toggleCategoryAvailability.isPending]);
 
   // ── Render ───────────────────────────────────────────────────────────────
 
@@ -284,8 +387,27 @@ export function CatalogPage() {
         }
       />
 
-      {/* View toggle */}
-      <div className="flex items-center justify-end">
+      {/* Store filter + view toggle */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2">
+          <MapPin className="h-4 w-4 text-[var(--text-tertiary)]" />
+          <Select value={storeFilter} onValueChange={(v) => { setStoreFilter(v); setViewMode('table'); }}>
+            <SelectTrigger className="w-[260px]">
+              <SelectValue placeholder="Filter by store" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Stores (Global)</SelectItem>
+              {(locationsData ?? []).map((loc) => (
+                <SelectItem key={loc.id} value={loc.id}>{loc.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {storeFilter !== 'all' && (
+            <span className="text-xs text-[var(--text-tertiary)] hidden md:inline">
+              Toggle the column on each row to enable / disable a category at this store.
+            </span>
+          )}
+        </div>
         <div className="flex rounded-lg border border-[var(--border-default)]">
           <Button
             variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
@@ -369,9 +491,13 @@ export function CatalogPage() {
         <DataTable columns={columns} data={categories} pageSize={20} />
       )}
 
-      {/* Add / Edit Dialog */}
+      {/* Add / Edit Dialog. Body uses max-h + overflow-y so the
+          location checkbox list (and the form generally) stays
+          scrollable on shorter viewports — previously the dialog ran
+          off the bottom of the screen with no way to reach Active /
+          Save when 'Specific locations' was selected with 8+ stores. */}
       <Dialog open={showDialog} onOpenChange={(open) => { if (!open) closeDialog(); }}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>{editTarget ? 'Edit Category' : 'Add Category'}</DialogTitle>
             <DialogDescription>
@@ -379,7 +505,7 @@ export function CatalogPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
+          <div className="space-y-4 py-2 overflow-y-auto pr-1 -mr-1 flex-1">
             {/* Name */}
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-[var(--text-primary)]">Name *</label>
@@ -422,6 +548,81 @@ export function CatalogPage() {
                 value={form.sortOrder}
                 onChange={(e) => updateField('sortOrder', e.target.value)}
               />
+            </div>
+
+            {/* Available at locations — same UX as the product detail
+                page. Empty list (= 'all locations' mode) means the
+                category is catalog-wide. Specific list lets admin
+                hide the category from chosen stores. */}
+            <div className="rounded-lg border border-[var(--border-default)] p-4">
+              <div className="mb-3">
+                <p className="text-sm font-medium text-[var(--text-primary)]">
+                  Available at locations
+                </p>
+                <p className="text-xs text-[var(--text-tertiary)]">
+                  Choose where this category should appear. "All locations" makes
+                  it visible at every store.
+                </p>
+              </div>
+              <div className="mb-4 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => updateField('locationMode', 'all')}
+                  className={`flex-1 rounded-md border px-3 py-2 text-sm transition-colors ${
+                    form.locationMode === 'all'
+                      ? 'border-primary-500 bg-primary-500/10 text-primary-500'
+                      : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--surface-tertiary)]'
+                  }`}
+                >
+                  All locations
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateField('locationMode', 'specific')}
+                  className={`flex-1 rounded-md border px-3 py-2 text-sm transition-colors ${
+                    form.locationMode === 'specific'
+                      ? 'border-primary-500 bg-primary-500/10 text-primary-500'
+                      : 'border-[var(--border-default)] text-[var(--text-secondary)] hover:bg-[var(--surface-tertiary)]'
+                  }`}
+                >
+                  Specific locations
+                </button>
+              </div>
+              {form.locationMode === 'specific' && (
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {(locationsData ?? []).map((loc) => {
+                    const checked = form.locationIds.includes(loc.id);
+                    return (
+                      <label
+                        key={loc.id}
+                        className={`flex cursor-pointer items-center gap-2 rounded-md border border-[var(--border-default)] px-3 py-2 text-sm transition-colors ${
+                          checked
+                            ? 'border-primary-500/50 bg-primary-500/5'
+                            : 'hover:bg-[var(--surface-tertiary)]/40'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                              ? [...form.locationIds, loc.id]
+                              : form.locationIds.filter((x) => x !== loc.id);
+                            updateField('locationIds', next);
+                          }}
+                          className="h-4 w-4 accent-primary-500"
+                        />
+                        <span className="truncate text-[var(--text-primary)]">{loc.name}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              {form.locationMode === 'specific' && form.locationIds.length === 0 && (
+                <p className="mt-2 text-xs text-danger">
+                  Pick at least one location, or switch back to "All locations".
+                </p>
+              )}
             </div>
 
             {/* Active toggle */}

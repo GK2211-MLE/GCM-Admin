@@ -546,12 +546,10 @@ export async function runStartup(): Promise<string> {
   if (tenantsForCms.length > 0) {
     const cmsTenantId = tenantsForCms[0].id;
     const standardSlugs = [
-      { slug: 'about',    title: 'About Us' },
-      { slug: 'privacy',  title: 'Privacy Policy' },
-      { slug: 'terms',    title: 'Terms & Conditions' },
-      { slug: 'returns',  title: 'Returns & Refunds' },
-      { slug: 'shipping', title: 'Shipping & Delivery' },
-      { slug: 'faq',      title: 'FAQ' },
+      { slug: 'about',   title: 'About Us' },
+      { slug: 'privacy', title: 'Privacy Policy' },
+      { slug: 'contact', title: 'Contact Us' },
+      { slug: 'terms',   title: 'Terms & Conditions' },
     ];
     for (const p of standardSlugs) {
       await sql`

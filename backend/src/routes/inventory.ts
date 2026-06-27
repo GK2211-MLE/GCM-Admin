@@ -33,9 +33,13 @@ export async function inventoryRoutes(app: FastifyInstance) {
         OR EXISTS (SELECT 1 FROM product_locations pl WHERE pl.product_id = ${products.id} AND pl.location_id = ${locationId})
       )`;
 
+      // Stock values: prefer store_inventory row; fall back to product base values
+      // so products without a store row still appear (stock = 0 by default).
+      const effectiveStock = sql<number>`COALESCE(${storeInventory.stockQuantity}, ${products.stockQuantity})`;
+      const effectiveThreshold = sql<number>`COALESCE(${storeInventory.lowStockThreshold}, ${products.lowStockThreshold})`;
+
       const conditions = [
         eq(products.tenantId, tenantId),
-        eq(storeInventory.locationId, locationId),
         visibilityFilter,
       ];
 
@@ -47,17 +51,20 @@ export async function inventoryRoutes(app: FastifyInstance) {
         conditions.push(eq(products.category, filters.category));
       }
       if (filters.stockStatus === 'out_of_stock') {
-        conditions.push(eq(storeInventory.stockQuantity, 0));
+        conditions.push(sql`COALESCE(${storeInventory.stockQuantity}, ${products.stockQuantity}) = 0`);
       } else if (filters.stockStatus === 'low_stock') {
-        conditions.push(gt(storeInventory.stockQuantity, 0));
-        conditions.push(lte(storeInventory.stockQuantity, storeInventory.lowStockThreshold));
+        conditions.push(sql`COALESCE(${storeInventory.stockQuantity}, ${products.stockQuantity}) > 0`);
+        conditions.push(sql`COALESCE(${storeInventory.stockQuantity}, ${products.stockQuantity}) <= COALESCE(${storeInventory.lowStockThreshold}, ${products.lowStockThreshold})`);
       } else if (filters.stockStatus === 'in_stock') {
-        conditions.push(gt(storeInventory.stockQuantity, storeInventory.lowStockThreshold));
+        conditions.push(sql`COALESCE(${storeInventory.stockQuantity}, ${products.stockQuantity}) > COALESCE(${storeInventory.lowStockThreshold}, ${products.lowStockThreshold})`);
       }
 
       const where = and(...conditions);
       const offset = (filters.page - 1) * filters.limit;
 
+      // LEFT JOIN so products without a store_inventory row still appear.
+      // The join condition pins the row to the selected location so we
+      // don't accidentally pull another store's stock.
       const items = await db.select({
         id: products.id,
         tenantId: products.tenantId,
@@ -70,13 +77,16 @@ export async function inventoryRoutes(app: FastifyInstance) {
         imageUrl: products.imageUrl,
         active: products.active,
         inStock: products.inStock,
-        stockQuantity: storeInventory.stockQuantity,
-        lowStockThreshold: storeInventory.lowStockThreshold,
+        stockQuantity: effectiveStock,
+        lowStockThreshold: effectiveThreshold,
         sortOrder: products.sortOrder,
         createdAt: products.createdAt,
-        updatedAt: storeInventory.updatedAt,
-      }).from(storeInventory)
-        .innerJoin(products, eq(storeInventory.productId, products.id))
+        updatedAt: sql<string>`COALESCE(${storeInventory.updatedAt}, ${products.updatedAt})`,
+      }).from(products)
+        .leftJoin(storeInventory, and(
+          eq(storeInventory.productId, products.id),
+          eq(storeInventory.locationId, locationId),
+        ))
         .where(where)
         .orderBy(asc(products.name))
         .limit(filters.limit)
@@ -84,29 +94,26 @@ export async function inventoryRoutes(app: FastifyInstance) {
 
       const [{ count: total }] = await db
         .select({ count: sql<number>`count(*)::int` })
-        .from(storeInventory)
-        .innerJoin(products, eq(storeInventory.productId, products.id))
+        .from(products)
+        .leftJoin(storeInventory, and(
+          eq(storeInventory.productId, products.id),
+          eq(storeInventory.locationId, locationId),
+        ))
         .where(where);
 
-      // Summary for this store (also filtered by product_locations visibility)
-      const storeCondition = and(
-        eq(storeInventory.locationId, locationId),
-        eq(products.tenantId, tenantId),
-        sql`(
-          NOT EXISTS (SELECT 1 FROM product_locations pl WHERE pl.product_id = ${products.id})
-          OR EXISTS (SELECT 1 FROM product_locations pl WHERE pl.product_id = ${products.id} AND pl.location_id = ${locationId})
-        )`,
-      );
       const [summaryRow] = await db
         .select({
           totalProducts: sql<number>`count(*)::int`,
-          inStock: sql<number>`count(*) filter (where ${storeInventory.stockQuantity} > ${storeInventory.lowStockThreshold})::int`,
-          lowStock: sql<number>`count(*) filter (where ${storeInventory.stockQuantity} > 0 and ${storeInventory.stockQuantity} <= ${storeInventory.lowStockThreshold})::int`,
-          outOfStock: sql<number>`count(*) filter (where ${storeInventory.stockQuantity} = 0)::int`,
+          inStock: sql<number>`count(*) filter (where COALESCE(${storeInventory.stockQuantity}, ${products.stockQuantity}) > COALESCE(${storeInventory.lowStockThreshold}, ${products.lowStockThreshold}))::int`,
+          lowStock: sql<number>`count(*) filter (where COALESCE(${storeInventory.stockQuantity}, ${products.stockQuantity}) > 0 and COALESCE(${storeInventory.stockQuantity}, ${products.stockQuantity}) <= COALESCE(${storeInventory.lowStockThreshold}, ${products.lowStockThreshold}))::int`,
+          outOfStock: sql<number>`count(*) filter (where COALESCE(${storeInventory.stockQuantity}, ${products.stockQuantity}) = 0)::int`,
         })
-        .from(storeInventory)
-        .innerJoin(products, eq(storeInventory.productId, products.id))
-        .where(storeCondition);
+        .from(products)
+        .leftJoin(storeInventory, and(
+          eq(storeInventory.productId, products.id),
+          eq(storeInventory.locationId, locationId),
+        ))
+        .where(and(eq(products.tenantId, tenantId), visibilityFilter));
 
       return {
         items: items.map((item) => ({
@@ -171,23 +178,25 @@ export async function inventoryRoutes(app: FastifyInstance) {
     const scope = getLocationScope(request, reply);
     if (reply.sent) return;
 
-    // For non-admin: aggregate over store_inventory rows for this store only.
+    // For non-admin: aggregate over products + optional store_inventory row.
     if (scope) {
       const [stats] = await db
         .select({
           totalProducts: sql<number>`count(*)::int`,
           activeProducts: sql<number>`count(*) filter (where ${products.active} = true)::int`,
-          inStock: sql<number>`count(*) filter (where ${storeInventory.stockQuantity} > ${storeInventory.lowStockThreshold})::int`,
-          lowStock: sql<number>`count(*) filter (where ${storeInventory.stockQuantity} > 0 and ${storeInventory.stockQuantity} <= ${storeInventory.lowStockThreshold})::int`,
-          outOfStock: sql<number>`count(*) filter (where ${storeInventory.stockQuantity} = 0)::int`,
+          inStock: sql<number>`count(*) filter (where COALESCE(${storeInventory.stockQuantity}, ${products.stockQuantity}) > COALESCE(${storeInventory.lowStockThreshold}, ${products.lowStockThreshold}))::int`,
+          lowStock: sql<number>`count(*) filter (where COALESCE(${storeInventory.stockQuantity}, ${products.stockQuantity}) > 0 and COALESCE(${storeInventory.stockQuantity}, ${products.stockQuantity}) <= COALESCE(${storeInventory.lowStockThreshold}, ${products.lowStockThreshold}))::int`,
+          outOfStock: sql<number>`count(*) filter (where COALESCE(${storeInventory.stockQuantity}, ${products.stockQuantity}) = 0)::int`,
           totalCategories: sql<number>`count(distinct ${products.category})::int`,
-          totalValue: sql<number>`coalesce(sum(${storeInventory.stockQuantity} * ${products.pricePerUnit}), 0)::int`,
+          totalValue: sql<number>`coalesce(sum(COALESCE(${storeInventory.stockQuantity}, ${products.stockQuantity}) * ${products.pricePerUnit}), 0)::int`,
         })
-        .from(storeInventory)
-        .innerJoin(products, eq(storeInventory.productId, products.id))
+        .from(products)
+        .leftJoin(storeInventory, and(
+          eq(storeInventory.productId, products.id),
+          eq(storeInventory.locationId, scope),
+        ))
         .where(and(
           eq(products.tenantId, tenantId),
-          eq(storeInventory.locationId, scope),
           sql`(
             NOT EXISTS (SELECT 1 FROM product_locations pl WHERE pl.product_id = ${products.id})
             OR EXISTS (SELECT 1 FROM product_locations pl WHERE pl.product_id = ${products.id} AND pl.location_id = ${scope})

@@ -56,7 +56,7 @@ export const config = loadConfig();
 export function printBanner(): void {
   console.log(`
   ====================================
-    Farm2Cook API
+    Good Crazy Meat API
     env:  ${config.NODE_ENV}
     port: ${config.PORT}
   ====================================

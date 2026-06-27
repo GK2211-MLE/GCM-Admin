@@ -1,9 +1,9 @@
 import { create } from 'zustand';
 import { authApi } from '@/lib/api-client';
 
-const TOKEN_KEY = 'f2c_admin_auth_token';
-const REFRESH_KEY = 'f2c_admin_refresh_token';
-const USER_KEY = 'f2c_admin_auth_user';
+const TOKEN_KEY = 'gcm_admin_auth_token';
+const REFRESH_KEY = 'gcm_admin_refresh_token';
+const USER_KEY = 'gcm_admin_auth_user';
 
 interface User {
   id: string;

@@ -34,9 +34,9 @@ export function AuthLayout() {
         {/* Logo */}
         <div className="mb-8 flex items-center justify-center gap-3">
           <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-primary-500 to-primary-600">
-            <span className="text-lg font-extrabold text-white">F2C</span>
+            <span className="text-lg font-extrabold text-white">GCM</span>
           </div>
-          <span className="text-2xl font-bold text-[var(--text-primary)]">Farm2Cook</span>
+          <span className="text-2xl font-bold text-[var(--text-primary)]">Good Crazy Meat</span>
         </div>
 
         <div className="rounded-2xl border border-[var(--border-default)] bg-[var(--surface-secondary)] p-8 shadow-2xl">

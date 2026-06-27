@@ -17,9 +17,9 @@ export default defineConfig({
         swDest: 'dist/sw.js',
       },
       manifest: {
-        name: 'Farm2Cook Admin',
-        short_name: 'F2C Admin',
-        description: 'Farm2Cook Admin Dashboard',
+        name: 'Good Crazy Meat Admin',
+        short_name: 'GCM Admin',
+        description: 'Good Crazy Meat Admin Dashboard',
         theme_color: '#10b981',
         background_color: '#030711',
         display: 'standalone',

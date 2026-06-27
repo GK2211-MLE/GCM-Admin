@@ -10,7 +10,7 @@ if (!DATABASE_URL) {
 const sql = postgres(DATABASE_URL);
 
 function generateOrderCode(): string {
-  return `F2C-${String(Math.floor(100000 + Math.random() * 900000))}`;
+  return `GCM-${String(Math.floor(100000 + Math.random() * 900000))}`;
 }
 
 function daysAgo(n: number): Date {
@@ -26,8 +26,8 @@ async function seed() {
   // 1. Create tenant
   const [tenant] = await sql`
     INSERT INTO tenants (name, slug, timezone, currency, tax_rate)
-    VALUES ('Farm2Cook', 'farm2cook', 'America/Chicago', 'USD', 0.085)
-    ON CONFLICT (slug) DO UPDATE SET name = 'Farm2Cook', tax_rate = 0.085
+    VALUES ('Good Crazy Meat', 'gcm', 'America/Chicago', 'USD', 0.085)
+    ON CONFLICT (slug) DO UPDATE SET name = 'Good Crazy Meat', tax_rate = 0.085
     RETURNING id
   `;
   const tenantId = tenant.id;
@@ -67,64 +67,57 @@ async function seed() {
   await sql`DELETE FROM customers WHERE tenant_id = ${tenantId}`;
   await sql`DELETE FROM products WHERE tenant_id = ${tenantId}`;
 
-  // 5. Seed products (units in lb for USA market)
+  // 5. Seed products — beef only (prices in cents, units in lb)
   const productData = [
-    // Chicken
-    { name: 'Whole Chicken', category: 'chicken', unit: 'lb', price: 399, weight: 2.2, desc: 'Farm-fresh whole chicken, cleaned and ready to cook', sort: 1 },
-    { name: 'Chicken Breast (Boneless)', category: 'chicken', unit: 'lb', price: 549, weight: 2.2, desc: 'Premium boneless chicken breast', sort: 2 },
-    { name: 'Chicken Thigh', category: 'chicken', unit: 'lb', price: 449, weight: 2.2, desc: 'Juicy chicken thigh pieces', sort: 3 },
-    { name: 'Chicken Drumstick', category: 'chicken', unit: 'lb', price: 379, weight: 2.2, desc: 'Tender chicken drumsticks', sort: 4 },
-    { name: 'Chicken Wings', category: 'chicken', unit: 'lb', price: 499, weight: 2.2, desc: 'Perfect for grilling or frying', sort: 5 },
-    { name: 'Chicken Liver', category: 'chicken', unit: 'lb', price: 299, weight: 1.1, desc: 'Fresh chicken liver', sort: 6 },
-    { name: 'Ground Chicken', category: 'chicken', unit: 'lb', price: 529, weight: 2.2, desc: 'Freshly ground chicken', sort: 7 },
-    { name: 'Chicken Lollipop', category: 'chicken', unit: 'lb', price: 599, weight: 2.2, desc: 'Pre-cut chicken lollipop pieces', sort: 8 },
+    // Steaks
+    { name: 'Ribeye Steak', category: 'steaks', unit: 'lb', price: 1499, weight: 1.0, desc: 'USDA Choice ribeye steak, beautifully marbled', sort: 1 },
+    { name: 'NY Strip Steak', category: 'steaks', unit: 'lb', price: 1399, weight: 1.0, desc: 'Classic New York strip steak, firm and flavorful', sort: 2 },
+    { name: 'T-Bone Steak', category: 'steaks', unit: 'lb', price: 1599, weight: 1.0, desc: 'Two steaks in one — tenderloin and strip', sort: 3 },
+    { name: 'Filet Mignon', category: 'steaks', unit: 'lb', price: 2499, weight: 1.0, desc: 'Premium center-cut filet mignon, ultra-tender', sort: 4 },
+    { name: 'Sirloin Steak', category: 'steaks', unit: 'lb', price: 1099, weight: 1.0, desc: 'Lean, bold-flavored top sirloin steak', sort: 5 },
+    { name: 'Flat Iron Steak', category: 'steaks', unit: 'lb', price: 1199, weight: 1.0, desc: 'Tender flat iron, great for grilling', sort: 6 },
+    { name: 'Skirt Steak', category: 'steaks', unit: 'lb', price: 999, weight: 1.0, desc: 'Flavorful skirt steak, perfect for fajitas', sort: 7 },
+    { name: 'Flank Steak', category: 'steaks', unit: 'lb', price: 1049, weight: 1.0, desc: 'Lean flank steak, ideal for marinating', sort: 8 },
 
-    // Mutton & Goat
-    { name: 'Goat Curry Cut', category: 'mutton', unit: 'lb', price: 899, weight: 2.2, desc: 'Bone-in goat meat curry cut', sort: 1 },
-    { name: 'Goat Leg (Bone-in)', category: 'mutton', unit: 'lb', price: 1049, weight: 2.2, desc: 'Whole goat leg with bone', sort: 2 },
-    { name: 'Goat Ribs', category: 'mutton', unit: 'lb', price: 979, weight: 2.2, desc: 'Tender goat ribs', sort: 3 },
-    { name: 'Ground Goat', category: 'mutton', unit: 'lb', price: 949, weight: 2.2, desc: 'Freshly ground goat meat', sort: 4 },
-    { name: 'Goat Brain', category: 'mutton', unit: 'piece', price: 499, weight: 0.4, desc: 'Fresh goat brain (per piece)', sort: 5 },
-    { name: 'Goat Liver', category: 'mutton', unit: 'lb', price: 699, weight: 1.1, desc: 'Fresh goat liver', sort: 6 },
-    { name: 'Lamb Chops', category: 'mutton', unit: 'lb', price: 1199, weight: 2.2, desc: 'Premium lamb chops', sort: 7 },
-    { name: 'Goat Trotters (Paya)', category: 'mutton', unit: 'lb', price: 599, weight: 2.2, desc: 'Goat trotters for paya soup', sort: 8 },
+    // Roasts
+    { name: 'Chuck Roast', category: 'roasts', unit: 'lb', price: 799, weight: 2.2, desc: 'Classic bone-in chuck roast for slow cooking', sort: 1 },
+    { name: 'Prime Rib Roast', category: 'roasts', unit: 'lb', price: 1799, weight: 2.2, desc: 'Bone-in prime rib roast, the ultimate centerpiece', sort: 2 },
+    { name: 'Rump Roast', category: 'roasts', unit: 'lb', price: 749, weight: 2.2, desc: 'Lean rump roast, great for pot roast', sort: 3 },
+    { name: 'Eye of Round Roast', category: 'roasts', unit: 'lb', price: 699, weight: 2.2, desc: 'Lean and tender eye of round roast', sort: 4 },
+    { name: 'Tri-Tip Roast', category: 'roasts', unit: 'lb', price: 999, weight: 2.2, desc: 'California-style tri-tip, great for grilling', sort: 5 },
+    { name: 'Bottom Round Roast', category: 'roasts', unit: 'lb', price: 649, weight: 2.2, desc: 'Budget-friendly bottom round, best braised', sort: 6 },
 
-    // Seafood
-    { name: 'Salmon Fillet', category: 'seafood', unit: 'lb', price: 1299, weight: 1.1, desc: 'Fresh Atlantic salmon fillet', sort: 1 },
-    { name: 'Shrimp (Large)', category: 'seafood', unit: 'lb', price: 1099, weight: 1.1, desc: 'Large deveined shrimp', sort: 2 },
-    { name: 'Tilapia (Whole)', category: 'seafood', unit: 'lb', price: 599, weight: 2.2, desc: 'Whole tilapia cleaned', sort: 3 },
-    { name: 'Catfish Fillet', category: 'seafood', unit: 'lb', price: 699, weight: 2.2, desc: 'Fresh catfish fillet', sort: 4 },
-    { name: 'Blue Crab (Whole)', category: 'seafood', unit: 'lb', price: 1199, weight: 2.2, desc: 'Whole blue crab', sort: 5 },
-    { name: 'Squid (Calamari)', category: 'seafood', unit: 'lb', price: 849, weight: 1.1, desc: 'Cleaned squid rings', sort: 6 },
-    { name: 'Rohu Fish Curry Cut', category: 'seafood', unit: 'lb', price: 649, weight: 2.2, desc: 'Rohu fish curry cut', sort: 7 },
-    { name: 'Pomfret (Whole)', category: 'seafood', unit: 'lb', price: 1099, weight: 1.1, desc: 'Whole pomfret cleaned', sort: 8 },
+    // Ground & Minced
+    { name: 'Ground Beef (80/20)', category: 'ground_beef', unit: 'lb', price: 699, weight: 1.0, desc: 'Premium 80% lean ground beef for burgers', sort: 1 },
+    { name: 'Ground Beef (85/15)', category: 'ground_beef', unit: 'lb', price: 749, weight: 1.0, desc: 'Leaner 85/15 ground beef for everyday cooking', sort: 2 },
+    { name: 'Ground Beef (90/10)', category: 'ground_beef', unit: 'lb', price: 849, weight: 1.0, desc: 'Extra lean 90/10 ground beef', sort: 3 },
+    { name: 'Beef Keema (Minced)', category: 'ground_beef', unit: 'lb', price: 799, weight: 1.0, desc: 'Finely minced beef for keema and kofta', sort: 4 },
+    { name: 'Beef Patties (4 pcs)', category: 'ground_beef', unit: 'piece', price: 999, weight: 0.9, desc: 'Hand-formed beef burger patties', sort: 5 },
+    { name: 'Chuck Ground Beef', category: 'ground_beef', unit: 'lb', price: 749, weight: 1.0, desc: 'Ground from chuck for rich beefy flavor', sort: 6 },
 
-    // Eggs
-    { name: 'Farm Eggs (Dozen)', category: 'eggs', unit: 'dozen', price: 499, weight: 1.5, desc: 'Farm-fresh free-range eggs', sort: 1 },
-    { name: 'Farm Eggs (Half Dozen)', category: 'eggs', unit: 'piece', price: 275, weight: 0.8, desc: '6 farm-fresh free-range eggs', sort: 2 },
-    { name: 'Duck Eggs (6 pcs)', category: 'eggs', unit: 'piece', price: 599, weight: 1.1, desc: '6 fresh duck eggs', sort: 3 },
-    { name: 'Quail Eggs (12 pcs)', category: 'eggs', unit: 'piece', price: 449, weight: 0.4, desc: '12 fresh quail eggs', sort: 4 },
-    { name: 'Organic Brown Eggs (Dozen)', category: 'eggs', unit: 'dozen', price: 699, weight: 1.5, desc: 'Organic brown eggs', sort: 5 },
+    // Ribs & Brisket
+    { name: 'Beef Short Ribs', category: 'ribs_brisket', unit: 'lb', price: 899, weight: 2.2, desc: 'Meaty bone-in short ribs for slow braising', sort: 1 },
+    { name: 'Beef Back Ribs', category: 'ribs_brisket', unit: 'lb', price: 849, weight: 2.2, desc: 'Classic beef back ribs for smoking or grilling', sort: 2 },
+    { name: 'Whole Beef Brisket', category: 'ribs_brisket', unit: 'lb', price: 799, weight: 2.2, desc: 'Whole packer brisket, perfect for smoking', sort: 3 },
+    { name: 'Beef Brisket (Flat)', category: 'ribs_brisket', unit: 'lb', price: 849, weight: 2.2, desc: 'Brisket flat cut, leaner for corning or smoking', sort: 4 },
+    { name: 'Beef Plate Ribs', category: 'ribs_brisket', unit: 'lb', price: 999, weight: 2.2, desc: 'Dino-style plate ribs for low and slow BBQ', sort: 5 },
+    { name: 'Flanken Ribs', category: 'ribs_brisket', unit: 'lb', price: 949, weight: 2.2, desc: 'Cross-cut ribs for Korean BBQ and grilling', sort: 6 },
 
-    // Ready to Cook
-    { name: 'Chicken Nuggets (1 lb)', category: 'ready_to_cook', unit: 'piece', price: 599, weight: 1.0, desc: 'Breaded chicken nuggets', sort: 1 },
-    { name: 'Chicken Sausage (6 pcs)', category: 'ready_to_cook', unit: 'piece', price: 449, weight: 0.7, desc: 'Smoked chicken sausages', sort: 2 },
-    { name: 'Seekh Kebab (8 pcs)', category: 'ready_to_cook', unit: 'piece', price: 699, weight: 0.9, desc: 'Ready-to-grill seekh kebabs', sort: 3 },
-    { name: 'Chicken Tikka (1 lb)', category: 'ready_to_cook', unit: 'piece', price: 749, weight: 1.0, desc: 'Marinated chicken tikka pieces', sort: 4 },
-    { name: 'Fish Fingers (10 pcs)', category: 'ready_to_cook', unit: 'piece', price: 549, weight: 0.7, desc: 'Crispy fish fingers', sort: 5 },
-    { name: 'Shammi Kebab (6 pcs)', category: 'ready_to_cook', unit: 'piece', price: 799, weight: 0.7, desc: 'Traditional shammi kebabs', sort: 6 },
-    { name: 'Chicken Momos (12 pcs)', category: 'ready_to_cook', unit: 'piece', price: 499, weight: 0.9, desc: 'Steamed chicken momos', sort: 7 },
-    { name: 'Prawn Tempura (8 pcs)', category: 'ready_to_cook', unit: 'piece', price: 899, weight: 0.7, desc: 'Battered prawn tempura', sort: 8 },
+    // Curry Cuts
+    { name: 'Beef Curry Cut (Bone-In)', category: 'curry_cuts', unit: 'lb', price: 749, weight: 2.2, desc: 'Mixed bone-in beef pieces for curries and stews', sort: 1 },
+    { name: 'Beef Stew Meat', category: 'curry_cuts', unit: 'lb', price: 699, weight: 2.2, desc: 'Pre-cut beef cubes perfect for slow-cooked stews', sort: 2 },
+    { name: 'Beef Shank (Cross-Cut)', category: 'curry_cuts', unit: 'lb', price: 799, weight: 2.2, desc: 'Cross-cut beef shank with marrow bone', sort: 3 },
+    { name: 'Beef Nihari Cut', category: 'curry_cuts', unit: 'lb', price: 849, weight: 2.2, desc: 'Traditional nihari cut for slow-braised curry', sort: 4 },
+    { name: 'Beef Chuck Cubes', category: 'curry_cuts', unit: 'lb', price: 749, weight: 2.2, desc: 'Tender chuck cubes for curries and pot roast', sort: 5 },
+    { name: 'Beef Neck Pieces', category: 'curry_cuts', unit: 'lb', price: 649, weight: 2.2, desc: 'Bone-in neck pieces, rich in collagen for broths', sort: 6 },
 
-    // Marinades
-    { name: 'Tandoori Chicken (2 lb)', category: 'marinades', unit: 'lb', price: 899, weight: 2.0, desc: 'Classic tandoori marinated chicken', sort: 1 },
-    { name: 'Lemon Pepper Chicken (2 lb)', category: 'marinades', unit: 'lb', price: 849, weight: 2.0, desc: 'Zesty lemon pepper marinated chicken', sort: 2 },
-    { name: 'BBQ Wings (1 lb)', category: 'marinades', unit: 'piece', price: 649, weight: 1.0, desc: 'BBQ sauce marinated wings', sort: 3 },
-    { name: 'Garlic Butter Shrimp (1 lb)', category: 'marinades', unit: 'piece', price: 999, weight: 1.0, desc: 'Garlic butter marinated shrimp', sort: 4 },
-    { name: 'Teriyaki Chicken (2 lb)', category: 'marinades', unit: 'lb', price: 899, weight: 2.0, desc: 'Japanese teriyaki marinated chicken', sort: 5 },
-    { name: 'Harissa Lamb Chops (1 lb)', category: 'marinades', unit: 'piece', price: 1299, weight: 1.0, desc: 'North African harissa marinated lamb', sort: 6 },
-    { name: 'Peri Peri Chicken (2 lb)', category: 'marinades', unit: 'lb', price: 899, weight: 2.0, desc: 'Spicy peri peri marinated chicken', sort: 7 },
-    { name: 'Cajun Fish Fillet (1 lb)', category: 'marinades', unit: 'piece', price: 799, weight: 1.0, desc: 'Cajun spiced fish fillet', sort: 8 },
+    // Specialty Cuts
+    { name: 'Beef Oxtail', category: 'specialty', unit: 'lb', price: 999, weight: 2.2, desc: 'Slow-braised oxtail, rich and gelatinous', sort: 1 },
+    { name: 'Beef Marrow Bones', category: 'specialty', unit: 'lb', price: 699, weight: 2.2, desc: 'Halved marrow bones for roasting or broths', sort: 2 },
+    { name: 'Beef Liver', category: 'specialty', unit: 'lb', price: 499, weight: 1.1, desc: 'Fresh beef liver, nutrient-dense and tender', sort: 3 },
+    { name: 'Beef Tongue', category: 'specialty', unit: 'lb', price: 799, weight: 2.2, desc: 'Whole beef tongue for slow braising', sort: 4 },
+    { name: 'Beef Cheeks', category: 'specialty', unit: 'lb', price: 899, weight: 1.1, desc: 'Melt-in-your-mouth braised beef cheeks', sort: 5 },
+    { name: 'Beef Tripe', category: 'specialty', unit: 'lb', price: 549, weight: 1.1, desc: 'Cleaned beef tripe for soups and stews', sort: 6 },
   ];
 
   const insertedProducts: { id: string; name: string; price: number }[] = [];
@@ -136,7 +129,7 @@ async function seed() {
     `;
     insertedProducts.push({ id: row.id, name: p.name, price: p.price });
   }
-  console.log(`Seeded ${productData.length} products across 6 categories`);
+  console.log(`Seeded ${productData.length} products across 6 beef categories`);
 
   // 6. Seed customers
   const customerData = [
@@ -177,8 +170,7 @@ async function seed() {
     const locationId = locationIds[Math.floor(Math.random() * locationIds.length)];
     const orderCode = generateOrderCode();
 
-    // Pick status — weight more toward delivered/confirmed for realistic data
-    const statusWeights = [2, 3, 2, 2, 1, 10, 1]; // heavier on delivered
+    const statusWeights = [2, 3, 2, 2, 1, 10, 1];
     const totalWeight = statusWeights.reduce((a, b) => a + b, 0);
     let r = Math.random() * totalWeight;
     let statusIdx = 0;
@@ -192,7 +184,6 @@ async function seed() {
     const deliveryMethod = deliveryMethods[Math.floor(Math.random() * deliveryMethods.length)];
     const paymentStatus = (status === 'delivered' || status === 'confirmed' || status === 'processing' || status === 'ready' || status === 'out_for_delivery') ? 'paid' : (status === 'cancelled' ? 'failed' : 'pending');
 
-    // Pick 1-4 random products for this order
     const itemCount = Math.floor(Math.random() * 4) + 1;
     const shuffled = [...insertedProducts].sort(() => Math.random() - 0.5);
     const orderProducts = shuffled.slice(0, itemCount);

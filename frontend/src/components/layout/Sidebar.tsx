@@ -83,7 +83,7 @@ export function Sidebar() {
               <Store className="h-4 w-4 text-white" />
             </div>
             {!collapsed && (
-              <span className="text-lg font-bold text-(--text-primary)">F2C</span>
+              <span className="text-lg font-bold text-(--text-primary)">GCM</span>
             )}
           </div>
           <button

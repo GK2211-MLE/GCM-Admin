@@ -1,4 +1,4 @@
-export const ORDER_CODE_PREFIX = 'F2C';
+export const ORDER_CODE_PREFIX = 'GCM';
 export const TAX_RATE = 0.05;
 export const CONVERSATION_TTL_MS = 30 * 60 * 1000;
 export const UNIT_WEIGHT_KG = 1;
@@ -14,12 +14,12 @@ export const ORDER_STATUSES = {
 } as const;
 
 export const CATEGORIES = {
-  chicken: { label: 'Chicken', icon: '🍗' },
-  mutton: { label: 'Mutton & Goat', icon: '🐐' },
-  seafood: { label: 'Seafood', icon: '🐟' },
-  eggs: { label: 'Farm Fresh Eggs', icon: '🥚' },
-  ready_to_cook: { label: 'Ready to Cook', icon: '🍳' },
-  marinades: { label: 'Marinades', icon: '🌶️' },
+  steaks: { label: 'Steaks', icon: '🥩' },
+  roasts: { label: 'Roasts', icon: '🍖' },
+  ground_beef: { label: 'Ground & Minced', icon: '🥓' },
+  ribs_brisket: { label: 'Ribs & Brisket', icon: '🦴' },
+  curry_cuts: { label: 'Curry Cuts', icon: '🍲' },
+  specialty: { label: 'Specialty Cuts', icon: '✨' },
 } as const;
 
 export const STATUS_COLORS: Record<string, string> = {

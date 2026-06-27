@@ -346,8 +346,8 @@ export async function customerCheckoutRoutes(app: FastifyInstance) {
       amount: total,                  // already in cents, includes tax + delivery - discount
       currency: 'usd',
       automatic_payment_methods: { enabled: true }, // card + Apple Pay + Google Pay + Link
-      description: `Farm2Cook order ${order.orderCode}`,
-      statement_descriptor_suffix: 'FARM2COOK',
+      description: `Good Crazy Meat order ${order.orderCode}`,
+      statement_descriptor_suffix: 'GOODCRAZYMEAT',
       receipt_email: checkoutEmail || undefined,
       metadata: {
         orderId: order.id,

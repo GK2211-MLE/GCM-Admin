@@ -143,13 +143,13 @@ export function welcomeEmail(name: string, siteUrl: string): string {
   `).join('');
 
   return brandedEmail({
-    preheader: `Welcome to Farm2Cook, ${first}! Premium halal meats delivered fresh.`,
+    preheader: `Welcome to Good Crazy Meat, ${first}! Premium beef delivered fresh.`,
     heroEmoji: '&#128075;',
     headline: `Welcome, ${first}!`,
     body: `
       <p style="margin:0 0 24px;font-size:15px;color:${B.text};line-height:1.7;text-align:center;">
-        You're now part of the Farm2Cook family. We deliver premium,<br/>
-        halal-certified fresh meats straight from our partner farms.
+        You're now part of the Good Crazy Meat family. We deliver premium,<br/>
+        halal-certified beef straight from our partner farms.
       </p>
       ${card(`<table cellpadding="0" cellspacing="0" border="0" width="100%">${featureRows}</table>`)}
       <p style="margin:20px 0 0;font-size:13px;color:${B.muted};line-height:1.6;text-align:center;">
@@ -361,7 +361,7 @@ export function newsletterWelcomeEmail(email: string, siteUrl: string): string {
   `).join('');
 
   return brandedEmail({
-    preheader: `You're in! Welcome to the Farm2Cook family.`,
+    preheader: `You're in! Welcome to the Good Crazy Meat family.`,
     heroEmoji: '&#128140;',
     headline: `You're subscribed!`,
     body: `

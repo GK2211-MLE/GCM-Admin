@@ -24,7 +24,7 @@ function applyTheme(resolved: 'dark' | 'light') {
   }
 }
 
-const stored = (typeof localStorage !== 'undefined' ? localStorage.getItem('f2c_theme') : null) as Theme | null;
+const stored = (typeof localStorage !== 'undefined' ? localStorage.getItem('gcm_theme') : null) as Theme | null;
 const initial: Theme = stored || 'dark';
 const initialResolved = initial === 'system' ? getSystemTheme() : initial;
 
@@ -37,7 +37,7 @@ export const useThemeStore = create<ThemeState>((set) => ({
 
   setTheme: (theme: Theme) => {
     const resolved = theme === 'system' ? getSystemTheme() : theme;
-    localStorage.setItem('f2c_theme', theme);
+    localStorage.setItem('gcm_theme', theme);
     applyTheme(resolved);
     set({ theme, resolvedTheme: resolved });
   },

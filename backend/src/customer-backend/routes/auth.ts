@@ -74,7 +74,7 @@ export async function customerAuthRoutes(app: FastifyInstance) {
     // Fire-and-forget welcome email — don't block the signup response.
     sendEmail(
       email,
-      `Welcome to Farm2Cook, ${name.split(' ')[0]}!`,
+      `Welcome to Good Crazy Meat, ${name.split(' ')[0]}!`,
       welcomeEmail(name, config.CUSTOMER_FRONTEND_URL),
     ).catch((err) => console.error('[signup] welcome email failed:', err));
 
@@ -454,7 +454,7 @@ export async function customerAuthRoutes(app: FastifyInstance) {
       // Welcome email for new Google users (fire-and-forget)
       sendEmail(
         email,
-        `Welcome to Farm2Cook, ${displayName.split(' ')[0]}!`,
+        `Welcome to Good Crazy Meat, ${displayName.split(' ')[0]}!`,
         welcomeEmail(displayName, config.CUSTOMER_FRONTEND_URL),
       ).catch((err) => console.error('[google-signup] welcome email failed:', err));
     }

@@ -257,7 +257,7 @@ function UserFormDialog({
             </label>
             <Input
               type="email"
-              placeholder="jane@farm2cook.com"
+              placeholder="jane@goodcrazymeat.com"
               value={form.email}
               onChange={(e) => setField('email', e.target.value)}
               error={errors.email}

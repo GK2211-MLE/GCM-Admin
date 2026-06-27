@@ -55,7 +55,7 @@ export async function sendEmail(
     try {
       const fromEmail = config.SMTP_USER || 'onboarding@resend.dev';
       const { data, error } = await r.emails.send({
-        from: `Farm2Cook <${fromEmail}>`,
+        from: `Good Crazy Meat <${fromEmail}>`,
         to: [to],
         subject,
         html,
@@ -86,7 +86,7 @@ export async function sendEmail(
 
   try {
     const info = await t.sendMail({
-      from: `"Farm2Cook" <${config.SMTP_USER}>`,
+      from: `"Good Crazy Meat" <${config.SMTP_USER}>`,
       to,
       subject,
       html,

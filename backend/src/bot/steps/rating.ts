@@ -6,7 +6,7 @@ import { orders } from '../../db/schema.js';
 export async function handleRating(state: ConversationState, input: string): Promise<string> {
   if (input === 'skip' || input === 's') {
     state.step = 'done';
-    return 'No problem! Thank you for ordering with Farm2Cook. Type "hi" to start a new order.';
+    return 'No problem! Thank you for ordering with Good Crazy Meat. Type "hi" to start a new order.';
   }
 
   const rating = parseInt(input, 10);

@@ -174,8 +174,8 @@ export async function locationRoutes(app: FastifyInstance) {
   // Merge one location into another, then hard-delete the source.
   //
   // Admin-only. Used to clean up legacy "Plano", "Irving", etc. rows
-  // that were left behind after rebranding to FARM2COOK PLANO /
-  // FARM2COOK IRVING etc. Historical orders pointing at the legacy row
+  // that were left behind after rebranding (e.g. PLANO / IRVING etc).
+  // Historical orders pointing at the legacy row
   // are re-parented onto the target, along with products, notifications,
   // and any admin_users.assigned_location_id pointing there. Only then
   // does the source row get dropped, so no FK violation, no orphans.

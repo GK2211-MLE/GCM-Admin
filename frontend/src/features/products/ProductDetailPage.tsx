@@ -885,7 +885,7 @@ export function ProductDetailPage() {
                   <div className="space-y-1.5">
                     <label className="text-sm font-medium text-[var(--text-primary)]">Distributor</label>
                     <Input
-                      placeholder="e.g. Farm2Cook Distribution"
+                      placeholder="e.g. Good Crazy Meat Distribution"
                       value={form.halalInfo.distributor}
                       onChange={(e) => updateHalalField('distributor', e.target.value)}
                     />

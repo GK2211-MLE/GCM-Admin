@@ -396,7 +396,7 @@ export function PromotionListPage() {
                     <Input
                       value={form.popupTitle}
                       onChange={(e) => setForm({ ...form, popupTitle: e.target.value })}
-                      placeholder="e.g. Welcome to Farm2Cook!"
+                      placeholder="e.g. Welcome to Good Crazy Meat!"
                     />
                     <p className="text-xs text-[var(--text-tertiary)] mt-1">
                       Defaults to "Save {form.discountValue || 'X'}% OFF" if blank.

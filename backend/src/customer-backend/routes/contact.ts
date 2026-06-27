@@ -65,7 +65,7 @@ export async function contactRoutes(app: FastifyInstance) {
     // Send newsletter welcome email (fire-and-forget)
     sendEmail(
       data.email,
-      `You're in! Welcome to Farm2Cook`,
+      `You're in! Welcome to Good Crazy Meat`,
       newsletterWelcomeEmail(data.email, config.CUSTOMER_FRONTEND_URL),
     ).catch((err) => console.error('[newsletter] welcome email failed:', err));
 

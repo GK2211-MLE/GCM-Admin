@@ -266,7 +266,7 @@ export function GeneralPage() {
                 <Input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Farm2Cook"
+                  placeholder="Good Crazy Meat"
                   required
                 />
               </div>
@@ -276,7 +276,7 @@ export function GeneralPage() {
                   type="email"
                   value={contactEmail}
                   onChange={(e) => setContactEmail(e.target.value)}
-                  placeholder="hello@farm2cook.com"
+                  placeholder="hello@goodcrazymeat.com"
                 />
               </div>
               <div>
@@ -578,7 +578,7 @@ export function GeneralPage() {
               </a>
               <p className="text-xs text-[var(--text-tertiary)]">
                 Tip: log in with the same email you used when connecting Stripe
-                to Farm2Cook.
+                to Good Crazy Meat.
               </p>
             </div>
           </CardContent>

@@ -1,6 +1,6 @@
 import { apiClient } from '@/lib/api-client';
 
-const VAPID_PUBLIC_KEY_STORAGE = 'f2c_vapid_public_key';
+const VAPID_PUBLIC_KEY_STORAGE = 'gcm_vapid_public_key';
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);

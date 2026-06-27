@@ -15,7 +15,7 @@ self.addEventListener('push', (event) => {
   try {
     payload = event.data.json();
   } catch {
-    payload = { title: 'Farm2Cook', body: event.data.text() };
+    payload = { title: 'Good Crazy Meat', body: event.data.text() };
   }
 
   event.waitUntil(

@@ -34,12 +34,12 @@ export async function emailRoutes(app: FastifyInstance) {
         <h2 style="color: #16a34a;">Order Confirmed!</h2>
         <p>Your order <strong>${orderCode}</strong> has been confirmed.</p>
         <p>Total: <strong>${total}</strong></p>
-        <p>Thank you for ordering from Farm2Cook!</p>
+        <p>Thank you for ordering from Good Crazy Meat!</p>
       </div>
     `;
 
     try {
-      await sendEmail(to, `Order ${orderCode} Confirmed - Farm2Cook`, html);
+      await sendEmail(to, `Order ${orderCode} Confirmed - Good Crazy Meat`, html);
       return { success: true };
     } catch (err) {
       return reply.code(500).send({ error: 'Failed to send email' });

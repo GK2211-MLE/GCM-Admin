@@ -13,7 +13,7 @@ export async function handleWelcome(state: ConversationState, phone: string): Pr
   state.tenantId = tenant.id;
   state.step = 'select_location';
 
-  return `Welcome to Farm2Cook! Fresh meat & seafood delivered to your door.
+  return `Welcome to Good Crazy Meat! Premium beef delivered to your door.
 
 Please select a store location to continue. Type the number:
 

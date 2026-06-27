@@ -57,7 +57,7 @@ export async function sendOrderConfirmationFor(orderId: string): Promise<void> {
 
     await sendEmail(
       email,
-      `Order ${order.orderCode} Confirmed — Farm2Cook`,
+      `Order ${order.orderCode} Confirmed — Good Crazy Meat`,
       orderConfirmationEmail(
         name,
         {

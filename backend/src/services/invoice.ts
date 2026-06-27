@@ -102,8 +102,8 @@ export function generateInvoiceHtml(
 <body>
   <div class="header">
     <div>
-      <img src="${FARM2COOK_LOGO_DATA_URL}" alt="FARM2COOK" class="brand-logo" />
-      <div class="brand-sub">Fresh from farm to your kitchen</div>
+      <img src="${FARM2COOK_LOGO_DATA_URL}" alt="GOOD CRAZY MEAT" class="brand-logo" />
+      <div class="brand-sub">Premium Beef · Halal Certified</div>
     </div>
     <div class="invoice-meta">
       <h2>${invoiceNumber}</h2>
@@ -150,8 +150,8 @@ export function generateInvoiceHtml(
   </div>
 
   <div class="footer">
-    <p>Thank you for choosing <span class="footer-brand">Farm2Cook</span>.</p>
-    <p style="margin-top:4px;">Questions about this invoice? Email <a href="mailto:hello@farm2cook.com" style="color:#cc2b2b;text-decoration:none;">hello@farm2cook.com</a></p>
+    <p>Thank you for choosing <span class="footer-brand">Good Crazy Meat</span>.</p>
+    <p style="margin-top:4px;">Questions about this invoice? Email <a href="mailto:hello@goodcrazymeat.com" style="color:#cc2b2b;text-decoration:none;">hello@goodcrazymeat.com</a></p>
   </div>
 
   <div class="no-print" style="text-align:center;margin-top:30px;">
@@ -267,7 +267,7 @@ export async function sendInvoiceEmail(
 
   await sendEmail(
     customer.email,
-    `Your Invoice ${`INV-${order.orderCode}`} – Farm2Cook`,
+    `Your Invoice ${`INV-${order.orderCode}`} – Good Crazy Meat`,
     emailBody,
     [
       {

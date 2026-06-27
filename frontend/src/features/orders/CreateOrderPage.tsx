@@ -95,7 +95,7 @@ export function CreateOrderPage() {
     () => lineItems.reduce((s, li) => s + li.quantity * li.unitPrice, 0),
     [lineItems],
   );
-  // Matches the customer site's fallback in farm2cook-customer/lib/constants.ts.
+  // Matches the customer site's fallback in gcm-customer/lib/constants.ts.
   // Both surfaces should ideally pull this from /api/settings so the admin
   // can change it in one place, but until that's wired the hardcoded value
   // is shared between customer and admin so totals reconcile.

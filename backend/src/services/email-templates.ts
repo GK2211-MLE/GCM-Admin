@@ -1,5 +1,5 @@
 /**
- * Farm2Cook — Premium branded email templates.
+ * Good Crazy Meat — Premium branded email templates.
  *
  * Design language:
  *   - Dark red header (#8b1a1a → #cc2b2b gradient) with white logo text
@@ -62,8 +62,8 @@ ${preheader ? `<div style="display:none;max-height:0;overflow:hidden;font-size:1
   <tr><td style="background:linear-gradient(135deg,${B.darkRed},${B.red});border-radius:16px 16px 0 0;padding:36px 40px;text-align:center;">
     <table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>
       <td style="text-align:center;">
-        <span style="font-size:32px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;font-family:Georgia,'Times New Roman',serif;">FARM<span style="color:#fbbf24;">2</span>COOK</span>
-        <br/><span style="font-size:10px;color:rgba(255,255,255,0.6);letter-spacing:0.2em;text-transform:uppercase;">Premium Fresh Meat · Halal Certified</span>
+        <span style="font-size:32px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;font-family:Georgia,'Times New Roman',serif;">GOOD CRAZY MEAT</span>
+        <br/><span style="font-size:10px;color:rgba(255,255,255,0.6);letter-spacing:0.2em;text-transform:uppercase;">Premium Beef · Halal Certified</span>
       </td>
     </tr></table>
   </td></tr>
@@ -89,10 +89,10 @@ ${preheader ? `<div style="display:none;max-height:0;overflow:hidden;font-size:1
 
   <!-- FOOTER -->
   <tr><td style="background:${B.dark};border-radius:0 0 16px 16px;padding:28px 40px;text-align:center;">
-    <span style="font-size:16px;font-weight:800;color:rgba(255,255,255,0.3);font-family:Georgia,serif;letter-spacing:-0.3px;">FARM<span style="color:rgba(251,191,36,0.4);">2</span>COOK</span>
+    <span style="font-size:16px;font-weight:800;color:rgba(255,255,255,0.3);font-family:Georgia,serif;letter-spacing:-0.3px;">GOOD CRAZY MEAT</span>
     <p style="margin:10px 0 0;font-size:11px;color:rgba(255,255,255,0.35);">
       820 W Spring Creek Pkwy, Ste 302, Plano TX 75023<br/>
-      &copy; ${YEAR} Farm2Cook. All rights reserved.
+      &copy; ${YEAR} Good Crazy Meat. All rights reserved.
     </p>
     ${footerExtra ? `<p style="margin:10px 0 0;font-size:10px;color:rgba(255,255,255,0.25);">${footerExtra}</p>` : ''}
   </td></tr>

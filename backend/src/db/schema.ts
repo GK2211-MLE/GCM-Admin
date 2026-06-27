@@ -93,6 +93,10 @@ export const products = pgTable(
     sortOrder: integer('sort_order').notNull().default(0),
     isHalal: boolean('is_halal').notNull().default(false),
     halalInfo: jsonb('halal_info').notNull().default({}),
+    badgeNoAntibiotics: boolean('badge_no_antibiotics').notNull().default(true),
+    badgeColdChain: boolean('badge_cold_chain').notNull().default(true),
+    badgeFresh: boolean('badge_fresh').notNull().default(true),
+    badgeHandSlaughtered: boolean('badge_hand_slaughtered').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -141,6 +145,15 @@ export const orders = pgTable(
     notes: text('notes'),
     source: varchar('source', { length: 20 }).notNull().default('app'),
     stripePaymentIntentId: varchar('stripe_payment_intent_id', { length: 255 }),
+    // Snapshot of the customer's contact info at order time. We used to
+    // read the linked customers row (or app_users row) on every order
+    // display, which meant when a guest with the same phone reused
+    // checkout the OLD order's name/email would silently change. These
+    // columns freeze the values at create time so order history stays
+    // honest.
+    customerNameSnapshot: varchar('customer_name_snapshot', { length: 255 }),
+    customerEmailSnapshot: varchar('customer_email_snapshot', { length: 255 }),
+    customerPhoneSnapshot: varchar('customer_phone_snapshot', { length: 32 }),
     rating: integer('rating'),
     ratingComment: text('rating_comment'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -219,12 +232,33 @@ export const rolePermissions = pgTable(
 // both the admin product list (filtered by the user's assigned location for
 // non-admin roles) and the customer-facing storefront (filtered by the
 // active store the customer selected).
+// Mirrors productLocations but for category-level visibility. Same
+// "zero rows = catalog-wide / one or more rows = explicit allow-list"
+// semantics. Lets admin hide a whole category at one store while
+// keeping it elsewhere — independent of per-product visibility.
+export const categoryLocations = pgTable(
+  'category_locations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    categoryId: uuid('category_id').notNull().references(() => categories.id, { onDelete: 'cascade' }),
+    locationId: uuid('location_id').notNull().references(() => locations.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('category_locations_unique_idx').on(t.categoryId, t.locationId),
+    index('category_locations_location_idx').on(t.locationId),
+  ],
+);
+
 export const productLocations = pgTable(
   'product_locations',
   {
     id: uuid('id').defaultRandom().primaryKey(),
     productId: uuid('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
     locationId: uuid('location_id').notNull().references(() => locations.id, { onDelete: 'cascade' }),
+    // NULL = inherit products.pricePerUnit. Otherwise the price (in cents)
+    // charged at this specific location for this SKU.
+    priceOverrideCents: integer('price_override_cents'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

@@ -35,6 +35,7 @@ const navItems = [
   { label: 'Invoices', icon: FileText, path: '/invoices' },
   { label: 'Inventory', icon: Warehouse, path: '/inventory' },
   { label: 'Catalog', icon: BookOpen, path: '/catalog' },
+  { label: 'Certifications', icon: ShieldCheck, path: '/certifications' },
   { label: 'Promotions', icon: Tag, path: '/promotions' },
   { label: 'Analytics', icon: BarChart3, path: '/analytics' },
   { label: 'CMS', icon: FileEdit, path: '/cms' },
@@ -82,7 +83,7 @@ export function Sidebar() {
               <Store className="h-4 w-4 text-white" />
             </div>
             {!collapsed && (
-              <span className="text-lg font-bold text-(--text-primary)">F2C</span>
+              <span className="text-lg font-bold text-(--text-primary)">GCM</span>
             )}
           </div>
           <button

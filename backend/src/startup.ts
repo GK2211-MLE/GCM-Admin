@@ -364,6 +364,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS recipes_tenant_slug_idx ON recipes(tenant_id, 
 DO $$ BEGIN ALTER TABLE products ADD COLUMN is_halal BOOLEAN NOT NULL DEFAULT false; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 DO $$ BEGIN ALTER TABLE products ADD COLUMN halal_info JSONB NOT NULL DEFAULT '{}'; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 
+-- Per-product trust badges. Default true so existing products carry the
+-- same promises that were previously hardcoded as static TRUST_BADGES on
+-- the customer detail page; admin can untoggle if a SKU doesn't qualify.
+DO $$ BEGIN ALTER TABLE products ADD COLUMN badge_no_antibiotics BOOLEAN NOT NULL DEFAULT true; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE products ADD COLUMN badge_cold_chain BOOLEAN NOT NULL DEFAULT true; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE products ADD COLUMN badge_fresh BOOLEAN NOT NULL DEFAULT true; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+-- Hand Slaughtered is a separate badge from is_halal: a product can be
+-- hand-slaughtered without the full halal-cert paperwork filled in, and
+-- vice versa. Default false because it only applies to halal SKUs.
+DO $$ BEGIN ALTER TABLE products ADD COLUMN badge_hand_slaughtered BOOLEAN NOT NULL DEFAULT false; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+
 -- ============================================================
 -- Customer-website tables (added by customer-backend/)
 -- All idempotent — safe to run on every startup.
@@ -481,6 +492,33 @@ WHERE p.location_id IS NOT NULL
 
 DO $$ BEGIN ALTER TABLE notifications ADD COLUMN location_id UUID REFERENCES locations(id); EXCEPTION WHEN duplicate_column THEN NULL; END $$;
 
+-- Per-location price override on the product_locations join. NULL means
+-- "use the product's base price_per_unit". Lets admin charge $13.99 for
+-- the same SKU in Texas and $14.99 in Illinois without duplicating
+-- products. Stored in cents (matches products.price_per_unit).
+DO $$ BEGIN ALTER TABLE product_locations ADD COLUMN price_override_cents INTEGER; EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+
+-- Customer-name snapshot on orders. Guests reusing the same phone number
+-- used to mutate the linked customers row's name/email, which retroactively
+-- changed every old order's displayed customer info. These columns freeze
+-- the values at order-create time so order history stays accurate.
+DO $$ BEGIN ALTER TABLE orders ADD COLUMN customer_name_snapshot VARCHAR(255); EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE orders ADD COLUMN customer_email_snapshot VARCHAR(255); EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE orders ADD COLUMN customer_phone_snapshot VARCHAR(32); EXCEPTION WHEN duplicate_column THEN NULL; END $$;
+
+-- Per-location category availability. Same semantics as product_locations:
+-- zero rows = "available at all locations" (catalog-wide). One or more
+-- rows = explicit allow-list. Lets admin hide a whole category at one
+-- store while keeping it elsewhere.
+CREATE TABLE IF NOT EXISTS category_locations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+  location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS category_locations_unique_idx ON category_locations(category_id, location_id);
+CREATE INDEX IF NOT EXISTS category_locations_location_idx ON category_locations(location_id);
+
 -- Backfill empty product slugs. Products inserted via early admin flows
 -- (or test scaffolding) sometimes ended up with an empty slug, which makes
 -- the customer-side /shop/[slug] URL 404. This one-liner regenerates a
@@ -537,8 +575,8 @@ export async function runStartup(): Promise<string> {
 
   const [tenant] = await sql`
     INSERT INTO tenants (name, slug, timezone, currency, tax_rate)
-    VALUES ('Farm2Cook', 'farm2cook', 'America/Chicago', 'USD', 0.085)
-    ON CONFLICT (slug) DO UPDATE SET name = 'Farm2Cook', tax_rate = 0.085
+    VALUES ('Good Crazy Meat', 'gcm', 'America/Chicago', 'USD', 0.085)
+    ON CONFLICT (slug) DO UPDATE SET name = 'Good Crazy Meat', tax_rate = 0.085
     RETURNING id
   `;
   const tenantId = tenant.id;
@@ -569,16 +607,16 @@ export async function runStartup(): Promise<string> {
 
   // Seed products
   const productData = [
-    { name: 'Whole Chicken', category: 'chicken', unit: 'lb', price: 399, weight: 2.2, desc: 'Farm-fresh whole chicken', sort: 1 },
-    { name: 'Chicken Breast (Boneless)', category: 'chicken', unit: 'lb', price: 549, weight: 2.2, desc: 'Premium boneless chicken breast', sort: 2 },
-    { name: 'Chicken Thigh', category: 'chicken', unit: 'lb', price: 449, weight: 2.2, desc: 'Juicy chicken thigh pieces', sort: 3 },
-    { name: 'Chicken Wings', category: 'chicken', unit: 'lb', price: 499, weight: 2.2, desc: 'Perfect for grilling or frying', sort: 4 },
-    { name: 'Goat Curry Cut', category: 'mutton', unit: 'lb', price: 899, weight: 2.2, desc: 'Bone-in goat meat curry cut', sort: 1 },
-    { name: 'Goat Leg (Bone-in)', category: 'mutton', unit: 'lb', price: 1049, weight: 2.2, desc: 'Whole goat leg with bone', sort: 2 },
-    { name: 'Lamb Chops', category: 'mutton', unit: 'lb', price: 1199, weight: 2.2, desc: 'Premium lamb chops', sort: 3 },
-    { name: 'Salmon Fillet', category: 'seafood', unit: 'lb', price: 1299, weight: 1.1, desc: 'Fresh Atlantic salmon fillet', sort: 1 },
-    { name: 'Shrimp (Large)', category: 'seafood', unit: 'lb', price: 1099, weight: 1.1, desc: 'Large deveined shrimp', sort: 2 },
-    { name: 'Farm Eggs (Dozen)', category: 'eggs', unit: 'dozen', price: 499, weight: 1.5, desc: 'Farm-fresh free-range eggs', sort: 1 },
+    { name: 'Ribeye Steak', category: 'steaks', unit: 'lb', price: 1499, weight: 1.0, desc: 'USDA Choice ribeye steak, beautifully marbled', sort: 1 },
+    { name: 'NY Strip Steak', category: 'steaks', unit: 'lb', price: 1399, weight: 1.0, desc: 'Classic New York strip steak', sort: 2 },
+    { name: 'Filet Mignon', category: 'steaks', unit: 'lb', price: 2499, weight: 1.0, desc: 'Premium center-cut filet mignon', sort: 3 },
+    { name: 'Chuck Roast', category: 'roasts', unit: 'lb', price: 799, weight: 2.2, desc: 'Classic bone-in chuck roast for slow cooking', sort: 1 },
+    { name: 'Prime Rib Roast', category: 'roasts', unit: 'lb', price: 1799, weight: 2.2, desc: 'Bone-in prime rib roast', sort: 2 },
+    { name: 'Ground Beef (80/20)', category: 'ground_beef', unit: 'lb', price: 699, weight: 1.0, desc: 'Premium 80% lean ground beef', sort: 1 },
+    { name: 'Beef Keema (Minced)', category: 'ground_beef', unit: 'lb', price: 799, weight: 1.0, desc: 'Finely minced beef for keema and kofta', sort: 2 },
+    { name: 'Beef Short Ribs', category: 'ribs_brisket', unit: 'lb', price: 899, weight: 2.2, desc: 'Meaty bone-in short ribs for slow braising', sort: 1 },
+    { name: 'Whole Beef Brisket', category: 'ribs_brisket', unit: 'lb', price: 799, weight: 2.2, desc: 'Whole packer brisket, perfect for smoking', sort: 2 },
+    { name: 'Beef Curry Cut (Bone-In)', category: 'curry_cuts', unit: 'lb', price: 749, weight: 2.2, desc: 'Mixed bone-in beef pieces for curries', sort: 1 },
   ];
 
   const insertedProducts: { id: string; name: string; price: number }[] = [];
@@ -622,7 +660,7 @@ export async function runStartup(): Promise<string> {
 
     const [order] = await sql`
       INSERT INTO orders (tenant_id, location_id, customer_id, order_code, status, payment_method, payment_status, delivery_method, subtotal, tax, total, source)
-      VALUES (${tenantId}, ${locationId}, ${customerId}, ${'F2C-' + (100000 + i)}, ${statuses[i]}, 'stripe', 'paid', 'delivery', ${subtotal}, ${tax}, ${total}, 'app')
+      VALUES (${tenantId}, ${locationId}, ${customerId}, ${'GCM-' + (100000 + i)}, ${statuses[i]}, 'stripe', 'paid', 'delivery', ${subtotal}, ${tax}, ${total}, 'app')
       RETURNING id
     `;
     await sql`

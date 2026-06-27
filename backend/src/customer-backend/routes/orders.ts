@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, and, desc, sql, inArray } from 'drizzle-orm';
 import { db } from '../../db/client.js';
-import { orders, orderItems, products } from '../../db/schema.js';
+import { orders, orderItems, products, appUsers } from '../../db/schema.js';
 import { customerAuthGuard } from '../middleware/auth.js';
+import { generateInvoiceHtml, generateInvoicePdf } from '../../services/invoice.js';
 
 export async function customerOrderRoutes(app: FastifyInstance) {
   // ── List my orders ──────────────────────────────────────────
@@ -191,5 +192,131 @@ export async function customerOrderRoutes(app: FastifyInstance) {
     );
 
     return { order: { ...order, items: enrichedItems } };
+  });
+
+  // ── Download invoice as PDF ─────────────────────────────────
+  // Streams a brand-styled PDF back to the customer for the given order.
+  // Scoped to the authenticated customer (orders.appUserId) so a logged-in
+  // user can never download someone else's invoice. Limited to paid
+  // orders — until payment clears, the receipt is just an order summary,
+  // not an invoice. Reuses the same generator the email service uses,
+  // so the PDF the customer downloads is byte-for-byte the same as the
+  // one we attach to the invoice email.
+  app.get('/:id/invoice.pdf', { preHandler: [customerAuthGuard] }, async (request, reply) => {
+    const customerId = request.customer!.id;
+    const { id } = request.params as { id: string };
+
+    const isUuid = id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+
+    const [order] = await db
+      .select()
+      .from(orders)
+      .where(and(
+        isUuid ? eq(orders.id, id) : eq(orders.orderCode, id),
+        eq(orders.appUserId, customerId),
+      ))
+      .limit(1);
+
+    if (!order) return reply.code(404).send({ error: 'Order not found' });
+    // Invoice is the record of the original transaction. We let customers
+    // download it both for currently-paid orders AND orders that were
+    // paid and later refunded — the original receipt is still valid
+    // accounting evidence; refunds are a separate event.
+    if (order.paymentStatus !== 'paid' && order.paymentStatus !== 'refunded') {
+      return reply.code(409).send({
+        error: 'Invoice is only available after payment is completed.',
+      });
+    }
+
+    const items = await db
+      .select()
+      .from(orderItems)
+      .where(eq(orderItems.orderId, order.id));
+
+    const [liveCustomer] = await db
+      .select({ name: appUsers.name, phone: appUsers.phone, email: appUsers.email })
+      .from(appUsers)
+      .where(eq(appUsers.id, customerId))
+      .limit(1);
+
+    // Invoice carries the contact info snapshot frozen at order-create
+    // time — that's the legal record of who placed THIS order, even if
+    // the user later edited their profile.
+    const customer = {
+      name: order.customerNameSnapshot ?? liveCustomer?.name ?? null,
+      phone: order.customerPhoneSnapshot ?? liveCustomer?.phone ?? null,
+      email: order.customerEmailSnapshot ?? liveCustomer?.email ?? null,
+    };
+
+    const html = generateInvoiceHtml(order, items, customer);
+    try {
+      const pdf = await generateInvoicePdf(html);
+      reply
+        .header('Content-Type', 'application/pdf')
+        .header('Content-Disposition', `attachment; filename="INV-${order.orderCode}.pdf"`)
+        .header('Cache-Control', 'no-store');
+      return reply.send(pdf);
+    } catch (err) {
+      // Puppeteer can OOM on small hosts. Don't 500 — let the customer
+      // know via a 503 with an explicit hint so the frontend can fall
+      // back to the HTML view (which never crashes).
+      app.log.error({ err, orderCode: order.orderCode }, 'invoice pdf generation failed');
+      return reply.code(503).send({
+        error: 'PDF generation is temporarily unavailable. Use the HTML invoice as a fallback.',
+        fallbackUrl: `/api/customer/orders/${order.id}/invoice.html`,
+      });
+    }
+  });
+
+  // ── HTML invoice (fallback / view-in-browser) ───────────────
+  // Returns the same brand-styled invoice as text/html. Never invokes
+  // puppeteer, so it always succeeds even when the host is memory-
+  // constrained. Customer can hit Cmd/Ctrl-P to save as PDF from any
+  // browser. Same auth + paid-or-refunded gate as the PDF route.
+  app.get('/:id/invoice.html', { preHandler: [customerAuthGuard] }, async (request, reply) => {
+    const customerId = request.customer!.id;
+    const { id } = request.params as { id: string };
+
+    const isUuid = id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+
+    const [order] = await db
+      .select()
+      .from(orders)
+      .where(and(
+        isUuid ? eq(orders.id, id) : eq(orders.orderCode, id),
+        eq(orders.appUserId, customerId),
+      ))
+      .limit(1);
+
+    if (!order) return reply.code(404).send({ error: 'Order not found' });
+    if (order.paymentStatus !== 'paid' && order.paymentStatus !== 'refunded') {
+      return reply.code(409).send({
+        error: 'Invoice is only available after payment is completed.',
+      });
+    }
+
+    const items = await db
+      .select()
+      .from(orderItems)
+      .where(eq(orderItems.orderId, order.id));
+
+    const [liveCustomer] = await db
+      .select({ name: appUsers.name, phone: appUsers.phone, email: appUsers.email })
+      .from(appUsers)
+      .where(eq(appUsers.id, customerId))
+      .limit(1);
+
+    // Invoice carries the contact info snapshot frozen at order-create
+    // time — that's the legal record of who placed THIS order, even if
+    // the user later edited their profile.
+    const customer = {
+      name: order.customerNameSnapshot ?? liveCustomer?.name ?? null,
+      phone: order.customerPhoneSnapshot ?? liveCustomer?.phone ?? null,
+      email: order.customerEmailSnapshot ?? liveCustomer?.email ?? null,
+    };
+
+    const html = generateInvoiceHtml(order, items, customer);
+    reply.header('Content-Type', 'text/html; charset=utf-8').header('Cache-Control', 'no-store');
+    return reply.send(html);
   });
 }

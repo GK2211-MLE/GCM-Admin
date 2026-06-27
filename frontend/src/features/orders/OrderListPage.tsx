@@ -23,9 +23,12 @@ import { useOrders, useUpdateOrderStatus } from './api';
 import type { OrderListItem, OrderStatus } from './types';
 import { STATUS_LABELS, STATUS_VARIANT, STATUS_FLOW, getOrderDisplayId, PAYMENT_LABELS } from './types';
 
+// "Pending Payment" tab is intentionally absent. Abandoned-checkout
+// (Stripe payment intent never completed) rows are filtered out of the
+// admin orders endpoint entirely — only paid / non-Stripe orders surface
+// to admin. Don't add the tab back without coordinating with backend.
 const STATUS_TABS: { value: string; label: string }[] = [
   { value: 'all', label: 'All' },
-  { value: 'pending_payment', label: 'Pending Payment' },
   { value: 'confirmed', label: 'Confirmed' },
   { value: 'processing', label: 'Processing' },
   { value: 'ready', label: 'Ready' },

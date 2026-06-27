@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { LoadingSpinner } from '@/components/feedback/LoadingSpinner';
-import { Building2, ShoppingCart, Bell, Truck, Save, Percent } from 'lucide-react';
+import { Building2, ShoppingCart, Bell, Truck, Save, Percent, ExternalLink, CreditCard } from 'lucide-react';
 
 interface TenantConfig {
   contactEmail: string;
@@ -537,6 +537,49 @@ export function GeneralPage() {
                 </Button>
                 <SuccessMessage show={successSection === 'delivery'} />
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Section 6: Payments — quick link to the merchant's Stripe
+            dashboard. Stripe handles the actual payouts and bank
+            account configuration outside this app, so the cleanest
+            "configure payouts" UX is just a button that takes the
+            owner to Stripe directly. */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <CreditCard className="h-5 w-5 text-primary-500" />
+              <CardTitle>Payments</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <p className="text-sm text-[var(--text-secondary)]">
+                Card payments are processed by Stripe. Your bank account, payout
+                schedule and tax forms live in the Stripe Dashboard, not here.
+              </p>
+              <a
+                href="https://dashboard.stripe.com/login"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded-lg bg-[#635bff] hover:bg-[#5851e5] px-4 py-2.5 text-sm font-semibold text-white transition-colors"
+              >
+                <svg
+                  className="h-4 w-4"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
+                  <path d="M13.479 9.883c-1.626-.604-2.512-1.078-2.512-1.794 0-.603.493-.95 1.378-.95 1.626 0 3.302.625 4.451 1.197l.65-4.013C16.532 3.806 14.764 3.4 12.704 3.4c-1.418 0-2.6.371-3.443 1.063-.876.731-1.331 1.787-1.331 3.063 0 2.314 1.413 3.302 3.728 4.137 1.49.534 1.99.917 1.99 1.5 0 .566-.484.892-1.357.892-1.073 0-2.835-.524-3.99-1.21l-.66 4.06c.99.561 2.821 1.137 4.722 1.137 1.5 0 2.752-.354 3.594-1.025.94-.747 1.43-1.85 1.43-3.176 0-2.367-1.448-3.355-3.908-4.258z" />
+                </svg>
+                Open Stripe Dashboard
+                <ExternalLink className="h-3.5 w-3.5 opacity-80" />
+              </a>
+              <p className="text-xs text-[var(--text-tertiary)]">
+                Tip: log in with the same email you used when connecting Stripe
+                to Farm2Cook.
+              </p>
             </div>
           </CardContent>
         </Card>

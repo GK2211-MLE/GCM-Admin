@@ -4,7 +4,10 @@ export const customerSignupSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6, 'Password must be at least 6 characters'),
   name: z.string().min(1, 'Name is required'),
-  phone: z.string().optional(),
+  // Phone is required for new signups so we can reach out about orders.
+  // Minimum 7 chars to filter out empty/garbage submissions while still
+  // accepting international formats.
+  phone: z.string().min(7, 'Phone number is required'),
 });
 
 export const customerLoginSchema = z.object({

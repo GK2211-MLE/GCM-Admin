@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { apiClient } from '@/lib/api-client';
@@ -238,29 +238,41 @@ function LocationFormDialog({
   const [form, setForm] = useState<LocationFormData>(EMPTY_FORM);
   const [errors, setErrors] = useState<Partial<Record<keyof LocationFormData, string>>>({});
 
-  // Sync form state when dialog opens
+  // Sync form state every time the dialog OPENS or the row being edited
+  // changes. The previous implementation only refreshed inside the
+  // handleOpenChange callback, which Radix only calls when the dialog's
+  // own trigger / overlay flips open — NOT when the parent toggles the
+  // controlled `open` prop programmatically (which is exactly what the
+  // "Edit" button does). Result: editing dropped you onto an empty
+  // form. A useEffect keyed on `open` + `initialData?.id` runs in
+  // every code path that opens the dialog.
+  useEffect(() => {
+    if (!open) return;
+    if (initialData) {
+      setForm({
+        name: initialData.name,
+        address: initialData.address,
+        city: initialData.city,
+        state: initialData.state,
+        zip: initialData.zip,
+        type: initialData.type,
+        phone: initialData.phone,
+        email: initialData.email ?? '',
+        operatingHours: initialData.operatingHours ?? '',
+        active: initialData.active,
+      });
+    } else {
+      setForm(EMPTY_FORM);
+    }
+    setErrors({});
+  }, [open, initialData?.id]);
+
   const handleOpenChange = useCallback(
     (next: boolean) => {
-      if (next && initialData) {
-        setForm({
-          name: initialData.name,
-          address: initialData.address,
-          city: initialData.city,
-          state: initialData.state,
-          zip: initialData.zip,
-          type: initialData.type,
-          phone: initialData.phone,
-          email: initialData.email ?? '',
-          operatingHours: initialData.operatingHours ?? '',
-          active: initialData.active,
-        });
-      } else if (next) {
-        setForm(EMPTY_FORM);
-      }
-      setErrors({});
+      // Effect above handles populating; just bubble the toggle up.
       onOpenChange(next);
     },
-    [initialData, onOpenChange],
+    [onOpenChange],
   );
 
   const setField = useCallback(

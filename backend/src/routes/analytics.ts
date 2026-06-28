@@ -240,9 +240,9 @@ export async function analyticsRoutes(app: FastifyInstance) {
       revenueByMonth: monthlyRevenue.map(r => ({ month: r.month, revenue: r.revenue / 100, orders: r.orders })),
       topProducts: topProducts.map(r => ({
         productId: r.productId,
-        name: r.name,
+        productName: r.name,
         revenue: r.revenue / 100,
-        quantity: r.quantity,
+        totalQty: r.quantity,
         orderCount: r.orderCount,
       })),
       recentOrders: recentOrders.map(r => ({
